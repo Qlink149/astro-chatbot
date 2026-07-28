@@ -36,6 +36,8 @@ cryptography==49.0.0
 
 geopy==2.5.0
 geographiclib==2.1
+geocoder==1.38.1
+python-dateutil==2.9.0.post0
 timezonefinder==8.2.5
 pytz==2024.1
 h3==4.5.0
