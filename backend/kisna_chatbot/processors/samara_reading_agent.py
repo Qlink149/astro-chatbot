@@ -362,9 +362,11 @@ class SamaraReadingAgent(Processor):
 
         try:
             BirthDetails, compute_chart = _kundli()
-        except Exception:
+        except Exception as exc:
             logger.exception(
-                "kundli_engine import failed (PyJHora/ephemeris missing?)",
+                "kundli_engine import failed: %s: %s",
+                type(exc).__name__,
+                exc,
                 extra={"phone_number": phone_number},
             )
             data["bot_response"] = [

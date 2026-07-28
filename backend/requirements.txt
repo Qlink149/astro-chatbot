@@ -41,5 +41,6 @@ pytz==2024.1
 h3==4.5.0
 numpy==2.4.6
 
+# pyswisseph ships manylinux wheels only through cp311 — keep runtime at 3.11
 PyJHora==4.8.7
 pyswisseph==2.10.3.2

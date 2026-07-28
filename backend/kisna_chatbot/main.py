@@ -553,6 +553,30 @@ def ping():
     return {"status": "ok"}
 
 
+@app.get("/kundli-health")
+def kundli_health():
+    """Verify chart engine deps are importable on this runtime."""
+    import sys
+
+    try:
+        from kundli_engine import BirthDetails, compute_chart  # noqa: F401
+
+        return {
+            "status": "ok",
+            "python": sys.version.split()[0],
+            "kundli_engine": True,
+        }
+    except Exception as exc:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "python": sys.version.split()[0],
+                "error": f"{type(exc).__name__}: {exc}",
+            },
+        )
+
+
 @app.post("/gupshup/message/samara")
 async def messages_samara(
     request: Request, background_tasks: BackgroundTasks
