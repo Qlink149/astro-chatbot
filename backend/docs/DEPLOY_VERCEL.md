@@ -3,19 +3,19 @@
 ## Prerequisites
 
 - MongoDB Atlas `MONGO_URI`
-- Vercel account + CLI: `npx vercel login`
+- Vercel account
 
 ## Deploy backend
 
 Root Directory = `backend`.
 
-```bash
-cd backend
-npx vercel link
-npx vercel deploy -y
-```
+Uses modern `functions` + `rewrites` in `vercel.json` (not legacy `builds`).
+Python `3.12` via `.python-version`. Runtime deps are in slim `requirements.txt`
+(full Emergent dump kept as `requirements.full.txt` for reference only).
 
-Set env vars from `.env.example` in the Vercel project settings.
+After env vars are set, redeploy and check:
+
+`GET https://YOUR-API.vercel.app/ping` → `{"status":"ok"}`
 
 ## Deploy dashboard
 
@@ -32,14 +32,3 @@ https://YOUR-API.vercel.app/gupshup/message/samara
 ```
 
 No `/api` prefix on this Vercel entrypoint (`api/index.py`).
-
-Register with:
-
-```bash
-python scripts/setup_gupshup_webhook.py
-```
-
-## Verify
-
-- `GET https://YOUR-API.vercel.app/ping` → `{"status":"ok"}`
-- Dashboard login with `SUPER_ADMIN_USERNAME` / `SUPER_ADMIN_PASSWORD`

@@ -5,3 +5,5 @@ __pycache__/
 .git/
 tests/
 docs/
+requirements.full.txt
+.github/
