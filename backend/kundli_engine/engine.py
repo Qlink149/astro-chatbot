@@ -32,6 +32,37 @@ from jhora.panchanga import drik
 from jhora.horoscope.chart import charts
 from jhora.horoscope.dhasa.graha import vimsottari
 
+# pysweph (cp312-compatible fork) can return more than the classic
+# (xx, retflag) 2-tuple from calc_ut/calc. PyJHora 4.8.7 still does:
+#   longi, _ = swe.calc_ut(...)
+# Normalize back to the legacy shape before any chart math runs.
+def _legacy_swe_calc_result(result):
+    if not isinstance(result, tuple):
+        return result
+    if len(result) == 2:
+        return result
+    if isinstance(result[0], (list, tuple)):
+        return result[0], result[1]
+    if len(result) >= 7:
+        return list(result[:6]), int(result[6])
+    return list(result[:-1]), result[-1]
+
+
+def _patch_swe_calc_api() -> None:
+    for name in ("calc_ut", "calc"):
+        orig = getattr(swe, name, None)
+        if orig is None or getattr(orig, "_clara_legacy_patched", False):
+            continue
+
+        def _wrapped(*args, _orig=orig, **kwargs):
+            return _legacy_swe_calc_result(_orig(*args, **kwargs))
+
+        _wrapped._clara_legacy_patched = True  # type: ignore[attr-defined]
+        setattr(swe, name, _wrapped)
+
+
+_patch_swe_calc_api()
+
 # PyJHora wheels no longer ship Swiss Ephemeris .se1 files. const.py points
 # swe at an empty jhora/data/ephe/ at import time — override that path here
 # AND patch const so later utils.set_ephemeris_data_path() cannot wipe it.
