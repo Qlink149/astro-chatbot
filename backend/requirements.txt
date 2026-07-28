@@ -41,6 +41,7 @@ pytz==2024.1
 h3==4.5.0
 numpy==2.4.6
 
-# pyswisseph ships manylinux wheels only through cp311 — keep runtime at 3.11
+# pyswisseph has no cp312 wheels; pysweph is a maintained drop-in (import swisseph).
+# Vercel only supports Python 3.12+, so we cannot use 3.11 + pyswisseph.
 PyJHora==4.8.7
-pyswisseph==2.10.3.2
+pysweph==2.10.3.6
