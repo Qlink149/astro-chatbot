@@ -19,7 +19,12 @@ from kisna_chatbot.prompts.samara_reading import (
 from kisna_chatbot.utils.format_chathistory import format_recent_history_str
 from kisna_chatbot.utils.geocode_in import geocode_place, timezone_offset_for
 from kisna_chatbot.utils.logger_config import logger
-from kundli_engine import BirthDetails, compute_chart
+
+def _kundli():
+    """Lazy import — keeps Vercel cold start from crashing if chart deps fail early."""
+    from kundli_engine import BirthDetails, compute_chart
+
+    return BirthDetails, compute_chart
 
 
 def _now_context(chart: dict | None) -> dict:
@@ -355,19 +360,19 @@ class SamaraReadingAgent(Processor):
             timezone_offset_for, lat, lon, year, month, day
         )
 
-        birth = BirthDetails(
-            year=year,
-            month=month,
-            day=day,
-            latitude=lat,
-            longitude=lon,
-            timezone_offset=tz_offset,
-            hour=hm[0] if hm else None,
-            minute=hm[1] if hm else None,
-            place_name=place,
-        )
-
         try:
+            BirthDetails, compute_chart = _kundli()
+            birth = BirthDetails(
+                year=year,
+                month=month,
+                day=day,
+                latitude=lat,
+                longitude=lon,
+                timezone_offset=tz_offset,
+                hour=hm[0] if hm else None,
+                minute=hm[1] if hm else None,
+                place_name=place,
+            )
             chart = await asyncio.to_thread(compute_chart, birth)
         except Exception:
             logger.exception(

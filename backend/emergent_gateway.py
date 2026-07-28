@@ -1,4 +1,8 @@
-"""Supervisor entrypoint — mounts the kisna-chatbot multi-client app under /api."""
+"""Local/Emergent gateway — mounts the Samara chatbot under /api.
+
+Not used on Vercel (Vercel entrypoint is api/index.py). Renamed from server.py
+so Vercel's Python framework detection does not pick this file up.
+"""
 
 from contextlib import asynccontextmanager
 

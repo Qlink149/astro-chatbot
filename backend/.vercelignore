@@ -7,3 +7,4 @@ tests/
 docs/
 requirements.full.txt
 .github/
+emergent_gateway.py

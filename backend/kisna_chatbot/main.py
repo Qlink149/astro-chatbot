@@ -25,7 +25,6 @@ from kisna_chatbot.database.db_utils import (
     touch_last_message_at,
 )
 from kisna_chatbot.middleware.logging_middleware import LoggingMiddleware
-from kisna_chatbot.pipelines.inference_pipeline import SamaraPipeline
 from kisna_chatbot.processors.response_manager import ResponseManager
 from kisna_chatbot.processors.non_text_handler import handle_non_text_message
 from kisna_chatbot.processors.user_registration import UserRegistration
@@ -491,6 +490,8 @@ async def process_message(
                 await _persist_session(data, phone_number, pipeline_start)
                 ResponseManager().handle_responses(data=data)
                 return
+
+            from kisna_chatbot.pipelines.inference_pipeline import SamaraPipeline
 
             data = await SamaraPipeline().run(data=data)
             if "bot_response" not in data:
