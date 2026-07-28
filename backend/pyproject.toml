@@ -1,5 +1,0 @@
-[project]
-name = "samara-backend"
-version = "0.1.0"
-requires-python = "==3.12.*"
-# Dependencies stay in requirements.txt for the Vercel Python builder.
