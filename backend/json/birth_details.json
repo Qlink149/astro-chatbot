@@ -1,0 +1,882 @@
+{
+  "version": "7.0",
+  "screens": [
+    {
+      "id": "BIRTH_DETAILS",
+      "terminal": true,
+      "title": "Your Birth Details",
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "name": "flow_path",
+            "type": "Form",
+            "children": [
+              {
+                "type": "TextSubheading",
+                "text": "Share your birth details for your Vedic kundli reading."
+              },
+              {
+                "type": "DatePicker",
+                "name": "birth_date",
+                "label": "Date of Birth",
+                "required": true
+              },
+              {
+                "type": "TextInput",
+                "name": "birth_hour_input",
+                "label": "Hour of Birth (1-12)",
+                "helper-text": "Type the hour, e.g. 7",
+                "input-type": "number",
+                "min-chars": 1,
+                "max-chars": 2,
+                "required": true
+              },
+              {
+                "type": "TextInput",
+                "name": "birth_minute_input",
+                "label": "Minute of Birth (0-59)",
+                "helper-text": "Type the minute, e.g. 32",
+                "input-type": "number",
+                "min-chars": 1,
+                "max-chars": 2,
+                "required": true
+              },
+              {
+                "type": "RadioButtonsGroup",
+                "name": "birth_ampm",
+                "label": "AM or PM?",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "AM",
+                    "title": "AM (morning)"
+                  },
+                  {
+                    "id": "PM",
+                    "title": "PM (afternoon / evening)"
+                  }
+                ]
+              },
+              {
+                "type": "Dropdown",
+                "name": "birth_place",
+                "label": "City of Birth",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "agartala",
+                    "title": "Agartala"
+                  },
+                  {
+                    "id": "agra",
+                    "title": "Agra"
+                  },
+                  {
+                    "id": "ahmedabad",
+                    "title": "Ahmedabad"
+                  },
+                  {
+                    "id": "ahmednagar",
+                    "title": "Ahmednagar"
+                  },
+                  {
+                    "id": "aizawl",
+                    "title": "Aizawl"
+                  },
+                  {
+                    "id": "ajmer",
+                    "title": "Ajmer"
+                  },
+                  {
+                    "id": "akola",
+                    "title": "Akola"
+                  },
+                  {
+                    "id": "alappuzha",
+                    "title": "Alappuzha"
+                  },
+                  {
+                    "id": "aligarh",
+                    "title": "Aligarh"
+                  },
+                  {
+                    "id": "allahabad",
+                    "title": "Allahabad"
+                  },
+                  {
+                    "id": "alwar",
+                    "title": "Alwar"
+                  },
+                  {
+                    "id": "amaravati",
+                    "title": "Amaravati"
+                  },
+                  {
+                    "id": "amravati",
+                    "title": "Amravati"
+                  },
+                  {
+                    "id": "amritsar",
+                    "title": "Amritsar"
+                  },
+                  {
+                    "id": "anantapur",
+                    "title": "Anantapur"
+                  },
+                  {
+                    "id": "arrah",
+                    "title": "Arrah"
+                  },
+                  {
+                    "id": "asansol",
+                    "title": "Asansol"
+                  },
+                  {
+                    "id": "aurangabad",
+                    "title": "Aurangabad"
+                  },
+                  {
+                    "id": "ayodhya",
+                    "title": "Ayodhya"
+                  },
+                  {
+                    "id": "bangalore",
+                    "title": "Bangalore"
+                  },
+                  {
+                    "id": "bareilly",
+                    "title": "Bareilly"
+                  },
+                  {
+                    "id": "bathinda",
+                    "title": "Bathinda"
+                  },
+                  {
+                    "id": "begusarai",
+                    "title": "Begusarai"
+                  },
+                  {
+                    "id": "belgaum",
+                    "title": "Belgaum"
+                  },
+                  {
+                    "id": "bellary",
+                    "title": "Bellary"
+                  },
+                  {
+                    "id": "berhampur",
+                    "title": "Berhampur"
+                  },
+                  {
+                    "id": "bhagalpur",
+                    "title": "Bhagalpur"
+                  },
+                  {
+                    "id": "bharatpur",
+                    "title": "Bharatpur"
+                  },
+                  {
+                    "id": "bhavnagar",
+                    "title": "Bhavnagar"
+                  },
+                  {
+                    "id": "bhilai",
+                    "title": "Bhilai"
+                  },
+                  {
+                    "id": "bhilwara",
+                    "title": "Bhilwara"
+                  },
+                  {
+                    "id": "bhopal",
+                    "title": "Bhopal"
+                  },
+                  {
+                    "id": "bhubaneswar",
+                    "title": "Bhubaneswar"
+                  },
+                  {
+                    "id": "bijapur",
+                    "title": "Bijapur"
+                  },
+                  {
+                    "id": "bikaner",
+                    "title": "Bikaner"
+                  },
+                  {
+                    "id": "bilaspur",
+                    "title": "Bilaspur"
+                  },
+                  {
+                    "id": "bokaro",
+                    "title": "Bokaro"
+                  },
+                  {
+                    "id": "chandigarh",
+                    "title": "Chandigarh"
+                  },
+                  {
+                    "id": "chandrapur",
+                    "title": "Chandrapur"
+                  },
+                  {
+                    "id": "chennai",
+                    "title": "Chennai"
+                  },
+                  {
+                    "id": "coimbatore",
+                    "title": "Coimbatore"
+                  },
+                  {
+                    "id": "cuttack",
+                    "title": "Cuttack"
+                  },
+                  {
+                    "id": "darbhanga",
+                    "title": "Darbhanga"
+                  },
+                  {
+                    "id": "davanagere",
+                    "title": "Davanagere"
+                  },
+                  {
+                    "id": "dehradun",
+                    "title": "Dehradun"
+                  },
+                  {
+                    "id": "delhi",
+                    "title": "Delhi"
+                  },
+                  {
+                    "id": "dewas",
+                    "title": "Dewas"
+                  },
+                  {
+                    "id": "dhanbad",
+                    "title": "Dhanbad"
+                  },
+                  {
+                    "id": "dhule",
+                    "title": "Dhule"
+                  },
+                  {
+                    "id": "dindigul",
+                    "title": "Dindigul"
+                  },
+                  {
+                    "id": "durg",
+                    "title": "Durg"
+                  },
+                  {
+                    "id": "dwarka",
+                    "title": "Dwarka"
+                  },
+                  {
+                    "id": "eluru",
+                    "title": "Eluru"
+                  },
+                  {
+                    "id": "erode",
+                    "title": "Erode"
+                  },
+                  {
+                    "id": "etawah",
+                    "title": "Etawah"
+                  },
+                  {
+                    "id": "faridabad",
+                    "title": "Faridabad"
+                  },
+                  {
+                    "id": "farrukhabad",
+                    "title": "Farrukhabad"
+                  },
+                  {
+                    "id": "firozabad",
+                    "title": "Firozabad"
+                  },
+                  {
+                    "id": "gandhidham",
+                    "title": "Gandhidham"
+                  },
+                  {
+                    "id": "gangtok",
+                    "title": "Gangtok"
+                  },
+                  {
+                    "id": "gaya",
+                    "title": "Gaya"
+                  },
+                  {
+                    "id": "ghaziabad",
+                    "title": "Ghaziabad"
+                  },
+                  {
+                    "id": "goa",
+                    "title": "Goa"
+                  },
+                  {
+                    "id": "gorakhpur",
+                    "title": "Gorakhpur"
+                  },
+                  {
+                    "id": "gulbarga",
+                    "title": "Gulbarga"
+                  },
+                  {
+                    "id": "guntur",
+                    "title": "Guntur"
+                  },
+                  {
+                    "id": "gurgaon",
+                    "title": "Gurgaon"
+                  },
+                  {
+                    "id": "guwahati",
+                    "title": "Guwahati"
+                  },
+                  {
+                    "id": "gwalior",
+                    "title": "Gwalior"
+                  },
+                  {
+                    "id": "haldwani",
+                    "title": "Haldwani"
+                  },
+                  {
+                    "id": "hampi",
+                    "title": "Hampi"
+                  },
+                  {
+                    "id": "hapur",
+                    "title": "Hapur"
+                  },
+                  {
+                    "id": "haridwar",
+                    "title": "Haridwar"
+                  },
+                  {
+                    "id": "hisar",
+                    "title": "Hisar"
+                  },
+                  {
+                    "id": "hosur",
+                    "title": "Hosur"
+                  },
+                  {
+                    "id": "howrah",
+                    "title": "Howrah"
+                  },
+                  {
+                    "id": "hubli",
+                    "title": "Hubli"
+                  },
+                  {
+                    "id": "hyderabad",
+                    "title": "Hyderabad"
+                  },
+                  {
+                    "id": "imphal",
+                    "title": "Imphal"
+                  },
+                  {
+                    "id": "indore",
+                    "title": "Indore"
+                  },
+                  {
+                    "id": "itanagar",
+                    "title": "Itanagar"
+                  },
+                  {
+                    "id": "jabalpur",
+                    "title": "Jabalpur"
+                  },
+                  {
+                    "id": "jaipur",
+                    "title": "Jaipur"
+                  },
+                  {
+                    "id": "jalandhar",
+                    "title": "Jalandhar"
+                  },
+                  {
+                    "id": "jalgaon",
+                    "title": "Jalgaon"
+                  },
+                  {
+                    "id": "jalna",
+                    "title": "Jalna"
+                  },
+                  {
+                    "id": "jammu",
+                    "title": "Jammu"
+                  },
+                  {
+                    "id": "jamnagar",
+                    "title": "Jamnagar"
+                  },
+                  {
+                    "id": "jamshedpur",
+                    "title": "Jamshedpur"
+                  },
+                  {
+                    "id": "jhansi",
+                    "title": "Jhansi"
+                  },
+                  {
+                    "id": "jodhpur",
+                    "title": "Jodhpur"
+                  },
+                  {
+                    "id": "junagadh",
+                    "title": "Junagadh"
+                  },
+                  {
+                    "id": "kadapa",
+                    "title": "Kadapa"
+                  },
+                  {
+                    "id": "kakinada",
+                    "title": "Kakinada"
+                  },
+                  {
+                    "id": "kannur",
+                    "title": "Kannur"
+                  },
+                  {
+                    "id": "kanpur",
+                    "title": "Kanpur"
+                  },
+                  {
+                    "id": "kanyakumari",
+                    "title": "Kanyakumari"
+                  },
+                  {
+                    "id": "karimnagar",
+                    "title": "Karimnagar"
+                  },
+                  {
+                    "id": "karnal",
+                    "title": "Karnal"
+                  },
+                  {
+                    "id": "khammam",
+                    "title": "Khammam"
+                  },
+                  {
+                    "id": "kharagpur",
+                    "title": "Kharagpur"
+                  },
+                  {
+                    "id": "kochi",
+                    "title": "Kochi"
+                  },
+                  {
+                    "id": "kohima",
+                    "title": "Kohima"
+                  },
+                  {
+                    "id": "kolhapur",
+                    "title": "Kolhapur"
+                  },
+                  {
+                    "id": "kolkata",
+                    "title": "Kolkata"
+                  },
+                  {
+                    "id": "kollam",
+                    "title": "Kollam"
+                  },
+                  {
+                    "id": "korba",
+                    "title": "Korba"
+                  },
+                  {
+                    "id": "kota",
+                    "title": "Kota"
+                  },
+                  {
+                    "id": "kottayam",
+                    "title": "Kottayam"
+                  },
+                  {
+                    "id": "kozhikode",
+                    "title": "Kozhikode"
+                  },
+                  {
+                    "id": "kurnool",
+                    "title": "Kurnool"
+                  },
+                  {
+                    "id": "latur",
+                    "title": "Latur"
+                  },
+                  {
+                    "id": "lucknow",
+                    "title": "Lucknow"
+                  },
+                  {
+                    "id": "ludhiana",
+                    "title": "Ludhiana"
+                  },
+                  {
+                    "id": "madurai",
+                    "title": "Madurai"
+                  },
+                  {
+                    "id": "malegaon",
+                    "title": "Malegaon"
+                  },
+                  {
+                    "id": "manali",
+                    "title": "Manali"
+                  },
+                  {
+                    "id": "mangalore",
+                    "title": "Mangalore"
+                  },
+                  {
+                    "id": "mathura",
+                    "title": "Mathura"
+                  },
+                  {
+                    "id": "mau",
+                    "title": "Mau"
+                  },
+                  {
+                    "id": "meerut",
+                    "title": "Meerut"
+                  },
+                  {
+                    "id": "mirzapur",
+                    "title": "Mirzapur"
+                  },
+                  {
+                    "id": "moradabad",
+                    "title": "Moradabad"
+                  },
+                  {
+                    "id": "mumbai",
+                    "title": "Mumbai"
+                  },
+                  {
+                    "id": "muzaffarnagar",
+                    "title": "Muzaffarnagar"
+                  },
+                  {
+                    "id": "muzaffarpur",
+                    "title": "Muzaffarpur"
+                  },
+                  {
+                    "id": "mysore",
+                    "title": "Mysore"
+                  },
+                  {
+                    "id": "nagercoil",
+                    "title": "Nagercoil"
+                  },
+                  {
+                    "id": "nagpur",
+                    "title": "Nagpur"
+                  },
+                  {
+                    "id": "nainital",
+                    "title": "Nainital"
+                  },
+                  {
+                    "id": "nanded",
+                    "title": "Nanded"
+                  },
+                  {
+                    "id": "nashik",
+                    "title": "Nashik"
+                  },
+                  {
+                    "id": "navi mumbai",
+                    "title": "Navi Mumbai"
+                  },
+                  {
+                    "id": "nellore",
+                    "title": "Nellore"
+                  },
+                  {
+                    "id": "nizamabad",
+                    "title": "Nizamabad"
+                  },
+                  {
+                    "id": "noida",
+                    "title": "Noida"
+                  },
+                  {
+                    "id": "palakkad",
+                    "title": "Palakkad"
+                  },
+                  {
+                    "id": "pali",
+                    "title": "Pali"
+                  },
+                  {
+                    "id": "panaji",
+                    "title": "Panaji"
+                  },
+                  {
+                    "id": "panipat",
+                    "title": "Panipat"
+                  },
+                  {
+                    "id": "parbhani",
+                    "title": "Parbhani"
+                  },
+                  {
+                    "id": "patiala",
+                    "title": "Patiala"
+                  },
+                  {
+                    "id": "patna",
+                    "title": "Patna"
+                  },
+                  {
+                    "id": "pondicherry",
+                    "title": "Pondicherry"
+                  },
+                  {
+                    "id": "porbandar",
+                    "title": "Porbandar"
+                  },
+                  {
+                    "id": "pune",
+                    "title": "Pune"
+                  },
+                  {
+                    "id": "puri",
+                    "title": "Puri"
+                  },
+                  {
+                    "id": "purnia",
+                    "title": "Purnia"
+                  },
+                  {
+                    "id": "pushkar",
+                    "title": "Pushkar"
+                  },
+                  {
+                    "id": "raichur",
+                    "title": "Raichur"
+                  },
+                  {
+                    "id": "raipur",
+                    "title": "Raipur"
+                  },
+                  {
+                    "id": "rajahmundry",
+                    "title": "Rajahmundry"
+                  },
+                  {
+                    "id": "rajkot",
+                    "title": "Rajkot"
+                  },
+                  {
+                    "id": "ramagundam",
+                    "title": "Ramagundam"
+                  },
+                  {
+                    "id": "rameswaram",
+                    "title": "Rameswaram"
+                  },
+                  {
+                    "id": "rampur",
+                    "title": "Rampur"
+                  },
+                  {
+                    "id": "ranchi",
+                    "title": "Ranchi"
+                  },
+                  {
+                    "id": "ratlam",
+                    "title": "Ratlam"
+                  },
+                  {
+                    "id": "rewa",
+                    "title": "Rewa"
+                  },
+                  {
+                    "id": "rishikesh",
+                    "title": "Rishikesh"
+                  },
+                  {
+                    "id": "rohtak",
+                    "title": "Rohtak"
+                  },
+                  {
+                    "id": "rourkela",
+                    "title": "Rourkela"
+                  },
+                  {
+                    "id": "sagar",
+                    "title": "Sagar"
+                  },
+                  {
+                    "id": "saharanpur",
+                    "title": "Saharanpur"
+                  },
+                  {
+                    "id": "salem",
+                    "title": "Salem"
+                  },
+                  {
+                    "id": "sambalpur",
+                    "title": "Sambalpur"
+                  },
+                  {
+                    "id": "sangli",
+                    "title": "Sangli"
+                  },
+                  {
+                    "id": "satara",
+                    "title": "Satara"
+                  },
+                  {
+                    "id": "satna",
+                    "title": "Satna"
+                  },
+                  {
+                    "id": "shahjahanpur",
+                    "title": "Shahjahanpur"
+                  },
+                  {
+                    "id": "shillong",
+                    "title": "Shillong"
+                  },
+                  {
+                    "id": "shimla",
+                    "title": "Shimla"
+                  },
+                  {
+                    "id": "shimoga",
+                    "title": "Shimoga"
+                  },
+                  {
+                    "id": "siliguri",
+                    "title": "Siliguri"
+                  },
+                  {
+                    "id": "sirsa",
+                    "title": "Sirsa"
+                  },
+                  {
+                    "id": "solapur",
+                    "title": "Solapur"
+                  },
+                  {
+                    "id": "sonipat",
+                    "title": "Sonipat"
+                  },
+                  {
+                    "id": "srinagar",
+                    "title": "Srinagar"
+                  },
+                  {
+                    "id": "surat",
+                    "title": "Surat"
+                  },
+                  {
+                    "id": "thane",
+                    "title": "Thane"
+                  },
+                  {
+                    "id": "thiruvananthapuram",
+                    "title": "Thiruvananthapuram"
+                  },
+                  {
+                    "id": "thoothukudi",
+                    "title": "Thoothukudi"
+                  },
+                  {
+                    "id": "thrissur",
+                    "title": "Thrissur"
+                  },
+                  {
+                    "id": "tiruchirappalli",
+                    "title": "Tiruchirappalli"
+                  },
+                  {
+                    "id": "tirunelveli",
+                    "title": "Tirunelveli"
+                  },
+                  {
+                    "id": "tirupati",
+                    "title": "Tirupati"
+                  },
+                  {
+                    "id": "tiruppur",
+                    "title": "Tiruppur"
+                  },
+                  {
+                    "id": "tumkur",
+                    "title": "Tumkur"
+                  },
+                  {
+                    "id": "udaipur",
+                    "title": "Udaipur"
+                  },
+                  {
+                    "id": "ujjain",
+                    "title": "Ujjain"
+                  },
+                  {
+                    "id": "una",
+                    "title": "Una"
+                  },
+                  {
+                    "id": "vadodara",
+                    "title": "Vadodara"
+                  },
+                  {
+                    "id": "varanasi",
+                    "title": "Varanasi"
+                  },
+                  {
+                    "id": "vellore",
+                    "title": "Vellore"
+                  },
+                  {
+                    "id": "vijayawada",
+                    "title": "Vijayawada"
+                  },
+                  {
+                    "id": "visakhapatnam",
+                    "title": "Visakhapatnam"
+                  },
+                  {
+                    "id": "vrindavan",
+                    "title": "Vrindavan"
+                  },
+                  {
+                    "id": "warangal",
+                    "title": "Warangal"
+                  }
+                ]
+              },
+              {
+                "type": "Footer",
+                "label": "Get My Reading",
+                "on-click-action": {
+                  "name": "complete",
+                  "payload": {
+                    "flow_kind": "birth_details",
+                    "birth_date": "${form.birth_date}",
+                    "birth_hour_input": "${form.birth_hour_input}",
+                    "birth_minute_input": "${form.birth_minute_input}",
+                    "birth_ampm": "${form.birth_ampm}",
+                    "birth_place": "${form.birth_place}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

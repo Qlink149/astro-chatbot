@@ -1,0 +1,195 @@
+"""
+Environment variable loader for the Samara astrology chatbot.
+
+Copy .env.example to .env before running so load_dotenv() can read it.
+"""
+
+import os
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
+def _log_warning(message: str) -> None:
+    from kisna_chatbot.utils.logger_config import logger
+
+    logger.warning(message, extra={"event": "env_validation"})
+
+REQUIRED_IN_PROD = (
+    "MONGO_URI",
+    "GUPSHUP_APP_ID",
+    "GUPSHUP_TOKEN",
+    "GUPSHUP_APP_NAME",
+    "GUPSHUP_API_KEY",
+    "GUPSHUP_WEBHOOK_SECRET",
+    "JWT_SECRET_KEY",
+    "SYSTEM_API_KEY",
+)
+
+GUPSHUP_REQUIRED_KEYS = (
+    "GUPSHUP_API_KEY",
+    "GUPSHUP_APP_ID",
+    "GUPSHUP_TOKEN",
+    "GUPSHUP_APP_NAME",
+)
+
+
+def _getenv(key: str, default: str = "") -> str:
+    """Read an environment variable, defaulting to empty string if unset."""
+    return os.getenv(key, default)
+
+
+def is_kb_enabled() -> bool:
+    """True when Knowledge Base (Chroma embeddings) is expected to be used."""
+    if _getenv("KB_ENABLED", "").strip().lower() in ("1", "true", "yes", "on"):
+        return True
+    return bool(_getenv("CHROMA_API_KEY", "").strip())
+
+
+def get_missing_ai_env_keys() -> list[str]:
+    """
+    Return env var names missing for configured AI providers and KB.
+
+    OPENAI_API_KEY is required only when OpenAI is used for chat or KB is enabled.
+    GROQ_API_KEY / GROQ_API_KEYS required when Groq is used for chat.
+    """
+    from kisna_chatbot.ai.config import get_ai_settings, refresh_ai_settings
+
+    refresh_ai_settings()
+    settings = get_ai_settings()
+
+    providers_needed: set[str] = {settings["default_provider"].value}
+    providers_needed.add(settings["classifier_provider"].value)
+    providers_needed.add(settings["general_provider"].value)
+    if settings["fallback_enabled"]:
+        providers_needed.add(settings["fallback_provider"].value)
+
+    missing: list[str] = []
+    if "openai" in providers_needed and not settings["openai_api_key"]:
+        missing.append("OPENAI_API_KEY")
+    if "groq" in providers_needed and not settings["groq_api_keys"]:
+        missing.append("GROQ_API_KEY or GROQ_API_KEYS")
+    if "anthropic" in providers_needed and not settings.get("anthropic_api_key"):
+        missing.append("ANTHROPIC_API_KEY")
+    if is_kb_enabled() and not settings["openai_api_key"]:
+        label = "OPENAI_API_KEY (required for KB embeddings, not chat)"
+        if label not in missing and "OPENAI_API_KEY" not in missing:
+            missing.append(label)
+
+    return missing
+
+
+openai_api_key = _getenv("OPENAI_API_KEY")
+mongo_uri = _getenv("MONGO_URI")
+mongo_db_name = _getenv("MONGO_DB_NAME", "astro_chatbot")
+
+chroma_api = _getenv("CHROMA_API_KEY")
+chroma_tenant = _getenv("CHROMA_TENANT")
+
+gupshup_app_id = _getenv("GUPSHUP_APP_ID")
+gupshup_token = _getenv("GUPSHUP_TOKEN")
+gupshup_app_name = _getenv("GUPSHUP_APP_NAME")
+gupshup_api_key = _getenv("GUPSHUP_API_KEY")
+gupshup_webhook_secret = _getenv("GUPSHUP_WEBHOOK_SECRET")
+gupshup_phone_number = _getenv("GUPSHUP_PHONE_NUMBER")
+gupshup_source = _getenv("GUPSHUP_SOURCE")
+
+super_admin_username = _getenv("SUPER_ADMIN_USERNAME")
+super_admin_password = _getenv("SUPER_ADMIN_PASSWORD")
+jwt_secret_key = _getenv("JWT_SECRET_KEY")
+system_api_key = _getenv("SYSTEM_API_KEY")
+
+ai_provider = _getenv("AI_PROVIDER", "openai")
+ai_provider_classifier = _getenv("AI_PROVIDER_CLASSIFIER")
+ai_provider_general = _getenv("AI_PROVIDER_GENERAL", "openai")
+groq_api_key = _getenv("GROQ_API_KEY")
+
+is_production = _getenv("ENV_MODE", "dev").lower() == "prod"
+
+_gupshup_startup_validated = False
+_ai_startup_validated = False
+
+
+def validate_env() -> None:
+    """
+    Validate required environment variables.
+
+    Raises RuntimeError in production when any required key is missing.
+    Logs warnings in non-production when keys are missing.
+    """
+    missing = [key for key in REQUIRED_IN_PROD if not _getenv(key)]
+    missing.extend(get_missing_ai_env_keys())
+
+    if not missing:
+        return
+    message = f"Missing required environment variables: {', '.join(missing)}"
+    if is_production:
+        raise RuntimeError(message)
+    _log_warning(message)
+
+
+def validate_gupshup_config() -> None:
+    """
+    Validate Gupshup credentials and webhook settings.
+
+    Called on FastAPI startup. Raises RuntimeError in production when required
+    keys are missing. Logs warnings in development.
+    """
+    global _gupshup_startup_validated
+    if _gupshup_startup_validated:
+        return
+    _gupshup_startup_validated = True
+
+    missing = [key for key in GUPSHUP_REQUIRED_KEYS if not _getenv(key)]
+    if is_production:
+        prod_only = []
+        if not _getenv("GUPSHUP_WEBHOOK_SECRET"):
+            prod_only.append("GUPSHUP_WEBHOOK_SECRET")
+        missing = list(dict.fromkeys(missing + prod_only))
+
+    if missing:
+        message = f"Missing Gupshup configuration: {', '.join(missing)}"
+        if is_production:
+            raise RuntimeError(message)
+        _log_warning(message)
+
+    if not _getenv("GUPSHUP_PHONE_NUMBER") and not _getenv("GUPSHUP_SOURCE"):
+        message = (
+            "Neither GUPSHUP_PHONE_NUMBER nor GUPSHUP_SOURCE is set; "
+            "outbound WhatsApp sends may fail"
+        )
+        if is_production:
+            raise RuntimeError(message)
+        _log_warning(message)
+
+    if not _getenv("GUPSHUP_WEBHOOK_SECRET"):
+        if is_production:
+            raise RuntimeError("GUPSHUP_WEBHOOK_SECRET is required in production")
+        _log_warning("GUPSHUP_WEBHOOK_SECRET not set, skipping webhook verification")
+
+
+def validate_ai_config() -> None:
+    """
+    Validate AI provider API keys for configured providers.
+
+    Called on FastAPI startup after env is loaded.
+    """
+    global _ai_startup_validated
+    if _ai_startup_validated:
+        return
+    _ai_startup_validated = True
+
+    from kisna_chatbot.ai.config import refresh_ai_settings
+
+    refresh_ai_settings()
+    missing = get_missing_ai_env_keys()
+    if not missing:
+        return
+    message = f"Missing AI configuration: {', '.join(missing)}"
+    if is_production:
+        raise RuntimeError(message)
+    _log_warning(message)
+
+
+validate_env()
