@@ -362,21 +362,42 @@ class SamaraReadingAgent(Processor):
 
         try:
             BirthDetails, compute_chart = _kundli()
-            birth = BirthDetails(
-                year=year,
-                month=month,
-                day=day,
-                latitude=lat,
-                longitude=lon,
-                timezone_offset=tz_offset,
-                hour=hm[0] if hm else None,
-                minute=hm[1] if hm else None,
-                place_name=place,
+        except Exception:
+            logger.exception(
+                "kundli_engine import failed (PyJHora/ephemeris missing?)",
+                extra={"phone_number": phone_number},
             )
+            data["bot_response"] = [
+                {"type": "text", "text": ERROR_TEXT},
+                {"type": "flow", "flow": "birth_details"},
+            ]
+            return data
+
+        birth = BirthDetails(
+            year=year,
+            month=month,
+            day=day,
+            latitude=lat,
+            longitude=lon,
+            timezone_offset=tz_offset,
+            hour=hm[0] if hm else None,
+            minute=hm[1] if hm else None,
+            place_name=place,
+        )
+        try:
             chart = await asyncio.to_thread(compute_chart, birth)
         except Exception:
             logger.exception(
-                "compute_chart failed", extra={"phone_number": phone_number}
+                "compute_chart failed",
+                extra={
+                    "phone_number": phone_number,
+                    "place": place,
+                    "lat": lat,
+                    "lon": lon,
+                    "dob": f"{year:04d}-{month:02d}-{day:02d}",
+                    "tob": f"{hm[0]:02d}:{hm[1]:02d}" if hm else None,
+                    "tz_offset": tz_offset,
+                },
             )
             data["bot_response"] = [
                 {"type": "text", "text": ERROR_TEXT},

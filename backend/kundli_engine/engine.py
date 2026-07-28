@@ -23,12 +23,20 @@ tell the user the limitation instead of faking certainty.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
+import swisseph as swe
 from jhora import const, utils
 from jhora.panchanga import drik
 from jhora.horoscope.chart import charts
 from jhora.horoscope.dhasa.graha import vimsottari
+
+# PyJHora wheels no longer ship Swiss Ephemeris .se1 files. Point pyswisseph
+# at the bundled ephe/ next to this module (required on Vercel).
+_EPHE_DIR = Path(__file__).resolve().parent / "ephe"
+if _EPHE_DIR.is_dir():
+    swe.set_ephe_path(str(_EPHE_DIR))
 
 # --- Pin the ayanamsa once, at import time. Never change this at runtime. ---
 const._DEFAULT_AYANAMSA_MODE = "LAHIRI"
