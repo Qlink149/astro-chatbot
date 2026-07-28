@@ -555,16 +555,38 @@ def ping():
 
 @app.get("/kundli-health")
 def kundli_health():
-    """Verify chart engine deps are importable on this runtime."""
+    """Verify chart engine imports AND compute_chart for a known birth."""
     import sys
+    import traceback
+    from pathlib import Path
 
     try:
-        from kundli_engine import BirthDetails, compute_chart  # noqa: F401
+        from kundli_engine import BirthDetails, compute_chart
+        from kundli_engine.engine import _EPHE_DIR
+        import swisseph as swe
 
+        birth = BirthDetails(
+            year=2004,
+            month=6,
+            day=27,
+            latitude=24.5854,
+            longitude=73.7125,
+            timezone_offset=5.5,
+            hour=7,
+            minute=15,
+            place_name="Udaipur",
+        )
+        chart = compute_chart(birth)
+        ephe_files = sorted(p.name for p in Path(_EPHE_DIR).glob("*")) if _EPHE_DIR.is_dir() else []
         return {
             "status": "ok",
             "python": sys.version.split()[0],
             "kundli_engine": True,
+            "ephe_dir": str(_EPHE_DIR),
+            "ephe_files": ephe_files,
+            "swe_version": getattr(swe, "version", None),
+            "rashi": (chart or {}).get("rashi"),
+            "nakshatra": (chart or {}).get("nakshatra"),
         }
     except Exception as exc:
         return JSONResponse(
@@ -573,6 +595,7 @@ def kundli_health():
                 "status": "error",
                 "python": sys.version.split()[0],
                 "error": f"{type(exc).__name__}: {exc}",
+                "traceback": traceback.format_exc()[-2500:],
             },
         )
 

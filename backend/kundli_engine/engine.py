@@ -32,11 +32,18 @@ from jhora.panchanga import drik
 from jhora.horoscope.chart import charts
 from jhora.horoscope.dhasa.graha import vimsottari
 
-# PyJHora wheels no longer ship Swiss Ephemeris .se1 files. Point pyswisseph
-# at the bundled ephe/ next to this module (required on Vercel).
+# PyJHora wheels no longer ship Swiss Ephemeris .se1 files. const.py points
+# swe at an empty jhora/data/ephe/ at import time — override that path here
+# AND patch const so later utils.set_ephemeris_data_path() cannot wipe it.
 _EPHE_DIR = Path(__file__).resolve().parent / "ephe"
-if _EPHE_DIR.is_dir():
-    swe.set_ephe_path(str(_EPHE_DIR))
+if not _EPHE_DIR.is_dir():
+    raise RuntimeError(f"Bundled Swiss Ephemeris directory missing: {_EPHE_DIR}")
+_EPHE_PATH = str(_EPHE_DIR)
+const._EPHIMERIDE_DATA_PATH = _EPHE_PATH
+const._ephe_path = _EPHE_PATH
+swe.set_ephe_path(_EPHE_PATH)
+if hasattr(utils, "set_ephemeris_data_path"):
+    utils.set_ephemeris_data_path(_EPHE_PATH)
 
 # --- Pin the ayanamsa once, at import time. Never change this at runtime. ---
 const._DEFAULT_AYANAMSA_MODE = "LAHIRI"
@@ -121,6 +128,9 @@ def compute_chart(birth: BirthDetails) -> dict:
     Deterministic chart computation.
     Returns a clean JSON-serializable dict for the interpretation layer.
     """
+    # Re-assert ephemeris path — PyJHora helpers may reset it to empty package data.
+    swe.set_ephe_path(_EPHE_PATH)
+
     # If time missing, use noon as a placeholder ONLY for sun-level positions,
     # and flag that Lagna is not trustworthy.
     hour = birth.hour if birth.has_time else 12

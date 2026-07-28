@@ -388,9 +388,11 @@ class SamaraReadingAgent(Processor):
         )
         try:
             chart = await asyncio.to_thread(compute_chart, birth)
-        except Exception:
+        except Exception as exc:
             logger.exception(
-                "compute_chart failed",
+                "compute_chart failed: %s: %s",
+                type(exc).__name__,
+                exc,
                 extra={
                     "phone_number": phone_number,
                     "place": place,
