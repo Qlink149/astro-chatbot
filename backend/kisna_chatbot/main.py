@@ -58,6 +58,7 @@ ALLOWED_ORIGINS = [
     "https://clara-astro.preview.emergentagent.com",
     "https://samara-dashboard.vercel.app",
     "https://samara.claraai.tech",
+    "https://astro-chatbot-dashboard.vercel.app",
 ]
 
 
