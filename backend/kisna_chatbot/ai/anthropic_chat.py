@@ -27,8 +27,8 @@ from kisna_chatbot.ai.types import (
 )
 from kisna_chatbot.utils.logger_config import logger
 
-DEFAULT_TIMEOUT = 30.0
-MAX_RETRIES = 3
+DEFAULT_TIMEOUT = 45.0
+MAX_RETRIES = 2
 RETRY_BACKOFF_SECONDS = 1.0
 
 
