@@ -600,6 +600,45 @@ def kundli_health():
         )
 
 
+@app.post("/razorpay/webhook")
+async def razorpay_webhook(request: Request):
+    """
+    Razorpay webhook — verifies HMAC-SHA256 of raw body.
+
+    Dashboard: point webhook URL here and set RAZORPAY_WEBHOOK_SECRET.
+    Enable events: payment_link.paid, payment_link.cancelled,
+    payment_link.expired, payment.failed.
+
+    Simulate locally:
+      body='{"event":"payment_link.paid","payload":{...}}'
+      sig=$(python -c "import hmac,hashlib; print(hmac.new(b'SECRET', body.encode(), hashlib.sha256).hexdigest())")
+      curl -X POST .../razorpay/webhook -H "X-Razorpay-Signature: $sig" -d "$body"
+    """
+    raw_body = await request.body()
+    signature = request.headers.get("X-Razorpay-Signature") or ""
+
+    from kisna_chatbot.payments.razorpay_client import verify_webhook_signature
+    from kisna_chatbot.payments.webhook_handler import handle_razorpay_event
+
+    if not verify_webhook_signature(raw_body, signature):
+        logger.warning("Razorpay webhook signature verification failed")
+        return JSONResponse(content={"success": False}, status_code=400)
+
+    try:
+        event = json.loads(raw_body.decode("utf-8") or "{}")
+    except json.JSONDecodeError:
+        return JSONResponse(content={"success": False, "error": "invalid_json"}, status_code=400)
+
+    try:
+        result = handle_razorpay_event(event if isinstance(event, dict) else {})
+    except Exception:
+        logger.exception("Razorpay webhook handler failed")
+        # Still 200 to avoid Razorpay retry storms on our bugs after verify passed
+        return JSONResponse(content={"success": True, "handled": False}, status_code=200)
+
+    return JSONResponse(content={"success": True, **result}, status_code=200)
+
+
 @app.post("/gupshup/message/samara")
 async def messages_samara(
     request: Request, background_tasks: BackgroundTasks

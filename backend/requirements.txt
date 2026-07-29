@@ -47,3 +47,7 @@ numpy==2.4.6
 # Vercel only supports Python 3.12+, so we cannot use 3.11 + pyswisseph.
 PyJHora==4.8.7
 pysweph==2.10.3.6
+
+razorpay==1.4.2
+setuptools>=65.0.0
+

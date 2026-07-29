@@ -8,6 +8,7 @@ ai_usage_logs = db["ai_usage_logs"]
 processed_inbound_messages = db["processed_inbound_messages"]
 chat_messages = db["chat_messages"]
 message_traces = db["message_traces"]
+payments = db["payments"]
 
 COLLECTIONS = (
     users,
@@ -16,4 +17,5 @@ COLLECTIONS = (
     processed_inbound_messages,
     chat_messages,
     message_traces,
+    payments,
 )

@@ -13,6 +13,7 @@ from kisna_chatbot.whatsapp_functions.quick_reply.send_quick_reply import (
 from kisna_chatbot.whatsapp_functions.send_text_message import (
     send_text_message_with_retry,
 )
+from kisna_chatbot.whatsapp_functions.send_cta_url import send_cta_url
 from kisna_chatbot.utils.logger_config import logger
 from kisna_chatbot.utils.rate_limiter import outbound_rate_limiter
 import time
@@ -35,6 +36,7 @@ class ResponseManager:
         self.register_handler("media", self._handle_media)
         self.register_handler("flow", self._handle_flow)
         self.register_handler("quickreply", self._handle_quick_reply)
+        self.register_handler("cta_url", self._handle_cta_url)
         self.register_handler("skip", self._handle_skip)
 
     def register_handler(self, response_type, handler):
@@ -76,6 +78,22 @@ class ResponseManager:
 
     def _handle_quick_reply(self, phone_number, bot_response):
         return send_quickreply(phone_number=phone_number, bot_response=bot_response)
+
+    def _handle_cta_url(self, phone_number, bot_response):
+        try:
+            return send_cta_url(phone_number=phone_number, bot_response=bot_response)
+        except Exception as e:
+            logger.exception(
+                "Failed to send CTA URL",
+                extra={"phone_number": phone_number, "error": str(e)},
+            )
+            # Fallback: plain text with the link
+            url = bot_response.get("url") or ""
+            text = bot_response.get("text") or "Complete your payment:"
+            return send_text_message_with_retry(
+                phone_number=phone_number,
+                bot_response={"type": "text", "text": f"{text}\n\n{url}".strip()},
+            )
 
     def _handle_skip(self, phone_number, bot_response):
         logger.warning(

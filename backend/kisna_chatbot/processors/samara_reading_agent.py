@@ -279,6 +279,12 @@ class SamaraReadingAgent(Processor):
         profile.setdefault("free_reading_used", False)
         messages = data.get("messages") or {}
 
+        # Exact "PAY" test trigger → Razorpay payment link + CTA URL button.
+        if messages.get("type") == "text":
+            text_body = ((messages.get("text") or {}).get("body") or "")
+            if text_body.strip() == "PAY":
+                return await self._handle_pay_command(data, profile, phone_number)
+
         flow_data = _parse_birth_flow_reply(messages)
         if flow_data is not None:
             return await self._handle_birth_details(data, profile, phone_number, flow_data)
@@ -312,6 +318,80 @@ class SamaraReadingAgent(Processor):
             return await self._send_free_reading(data, profile, phone_number)
 
         return await self._handle_followup(data, profile, phone_number)
+
+    async def _handle_pay_command(
+        self, data: dict, profile: dict, phone_number: str
+    ) -> dict:
+        """Exact WhatsApp text PAY → create Razorpay link and send Pay Now CTA."""
+        try:
+            from kisna_chatbot.payments.service import (
+                create_and_store_payment_link,
+                make_samara_order_id,
+                test_payment_amount_inr,
+            )
+
+            amount = test_payment_amount_inr()
+            order_id = make_samara_order_id(phone_number)
+            customer_name = (
+                profile.get("username")
+                or profile.get("name")
+                or "Samara user"
+            )
+            result = create_and_store_payment_link(
+                order_id=order_id,
+                amount_in_rupees=amount,
+                currency="INR",
+                customer={
+                    "name": str(customer_name)[:100],
+                    "contact": phone_number,
+                },
+                notes={
+                    "client_id": "samara",
+                    "phone_number": phone_number,
+                    "source": "whatsapp_PAY",
+                },
+                phone_number=phone_number,
+                client_id="samara",
+                description=f"Samara credits — ₹{amount:g}",
+            )
+            amount_display = (
+                str(int(amount)) if float(amount).is_integer() else f"{amount:g}"
+            )
+            data["bot_response"] = [
+                {
+                    "type": "cta_url",
+                    "text": (
+                        f"Click below to complete your payment of ₹{amount_display} "
+                        f"for Samara credits (10 questions)."
+                    ),
+                    "display_text": "Pay Now",
+                    "url": result["short_url"],
+                    "footer": "Samara by Clara",
+                }
+            ]
+            logger.info(
+                "PAY command: payment link created",
+                extra={
+                    "phone_number": phone_number,
+                    "payment_link_id": result["payment_link_id"],
+                    "order_id": order_id,
+                },
+            )
+        except Exception:
+            logger.exception(
+                "PAY command failed",
+                extra={"phone_number": phone_number},
+            )
+            data["bot_response"] = [
+                {
+                    "type": "text",
+                    "text": (
+                        "Maaf kijiye, payment link abhi nahi ban paya 😔 "
+                        "Thodi der baad 'PAY' likh kar try kijiye. 🙏"
+                    ),
+                }
+            ]
+        return data
 
     # ── Flow completion → geocode → compute_chart ────────────────────────────
 
