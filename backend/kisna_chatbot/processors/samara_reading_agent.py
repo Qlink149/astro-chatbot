@@ -324,11 +324,17 @@ class SamaraReadingAgent(Processor):
     ) -> dict:
         """Exact WhatsApp text PAY → create Razorpay link and send Pay Now CTA."""
         try:
+            from kisna_chatbot.payments.razorpay_client import keys_configured
             from kisna_chatbot.payments.service import (
                 create_and_store_payment_link,
                 make_samara_order_id,
                 test_payment_amount_inr,
             )
+
+            if not keys_configured():
+                raise RuntimeError(
+                    "RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET missing on this deployment"
+                )
 
             amount = test_payment_amount_inr()
             order_id = make_samara_order_id(phone_number)
@@ -377,9 +383,11 @@ class SamaraReadingAgent(Processor):
                     "order_id": order_id,
                 },
             )
-        except Exception:
+        except Exception as exc:
             logger.exception(
-                "PAY command failed",
+                "PAY command failed: %s: %s",
+                type(exc).__name__,
+                exc,
                 extra={"phone_number": phone_number},
             )
             data["bot_response"] = [

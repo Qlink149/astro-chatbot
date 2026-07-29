@@ -16,7 +16,7 @@ def razorpay_env(monkeypatch):
     monkeypatch.setenv("RAZORPAY_KEY_ID", "rzp_test_key")
     monkeypatch.setenv("RAZORPAY_KEY_SECRET", "rzp_test_secret")
     monkeypatch.setenv("RAZORPAY_WEBHOOK_SECRET", "whsec_test_secret")
-    monkeypatch.setenv("SAMARA_TEST_PAYMENT_AMOUNT_INR", "49")
+    monkeypatch.setenv("SAMARA_TEST_PAYMENT_AMOUNT_INR", "1")
     monkeypatch.setenv("ENV_MODE", "dev")
     monkeypatch.setenv("SYSTEM_API_KEY", "test_system_api_key")
     monkeypatch.setenv("MONGO_URI", os.getenv("MONGO_URI") or "mongodb://localhost:27017")
@@ -96,25 +96,34 @@ def test_webhook_endpoint_accepts_valid_signature(razorpay_env, monkeypatch):
 def test_create_payment_link_persists_and_returns(razorpay_env, monkeypatch):
     saved = {}
 
-    class _FakePaymentLink:
-        def create(self, payload):
-            assert payload["amount"] == 4900
-            assert payload["currency"] == "INR"
-            assert payload["reference_id"] == "samara_test_1"
+    class _FakeResp:
+        status_code = 200
+        text = "{}"
+
+        def json(self):
             return {
                 "id": "plink_test_123",
                 "short_url": "https://rzp.io/rzp/test123",
                 "status": "created",
-                "amount": 4900,
+                "amount": 100,
             }
 
     class _FakeClient:
-        payment_link = _FakePaymentLink()
+        def __enter__(self):
+            return self
 
-    monkeypatch.setattr(
-        "kisna_chatbot.payments.razorpay_client.get_razorpay_client",
-        lambda: _FakeClient(),
-    )
+        def __exit__(self, *args):
+            return False
+
+        def post(self, url, headers=None, json=None):
+            assert "payment_links" in url
+            assert json["amount"] == 100
+            assert json["currency"] == "INR"
+            assert json["reference_id"] == "samara_test_1"
+            assert json["customer"]["contact"] == "+919999999999"
+            return _FakeResp()
+
+    monkeypatch.setattr("httpx.Client", lambda **kwargs: _FakeClient())
 
     def _fake_save(record):
         saved.update(record)
@@ -129,7 +138,7 @@ def test_create_payment_link_persists_and_returns(razorpay_env, monkeypatch):
 
     result = create_and_store_payment_link(
         order_id="samara_test_1",
-        amount_in_rupees=49,
+        amount_in_rupees=1,
         currency="INR",
         customer={"name": "Test User", "contact": "919999999999"},
         notes={"client_id": "samara"},
@@ -141,27 +150,34 @@ def test_create_payment_link_persists_and_returns(razorpay_env, monkeypatch):
     assert result["short_url"] == "https://rzp.io/rzp/test123"
     assert result["order_id"] == "samara_test_1"
     assert saved["payment_link_id"] == "plink_test_123"
-    assert saved["amount_paise"] == 4900
+    assert saved["amount_paise"] == 100
     assert saved["phone_number"] == "919999999999"
 
 
 def test_create_payment_link_http_endpoint(razorpay_env, monkeypatch):
-    class _FakePaymentLink:
-        def create(self, payload):
+    class _FakeResp:
+        status_code = 200
+        text = "{}"
+
+        def json(self):
             return {
                 "id": "plink_http_1",
                 "short_url": "https://rzp.io/rzp/http1",
                 "status": "created",
-                "amount": 4900,
+                "amount": 100,
             }
 
     class _FakeClient:
-        payment_link = _FakePaymentLink()
+        def __enter__(self):
+            return self
 
-    monkeypatch.setattr(
-        "kisna_chatbot.payments.razorpay_client.get_razorpay_client",
-        lambda: _FakeClient(),
-    )
+        def __exit__(self, *args):
+            return False
+
+        def post(self, url, headers=None, json=None):
+            return _FakeResp()
+
+    monkeypatch.setattr("httpx.Client", lambda **kwargs: _FakeClient())
     monkeypatch.setattr(
         "kisna_chatbot.payments.service.save_payment",
         lambda record: record,
@@ -183,7 +199,7 @@ def test_create_payment_link_http_endpoint(razorpay_env, monkeypatch):
         },
         json={
             "order_id": "samara_http_1",
-            "amount_in_rupees": 49,
+            "amount_in_rupees": 1,
             "currency": "INR",
             "customer": {"name": "Test", "contact": "919999999999"},
             "notes": {"client_id": "samara"},

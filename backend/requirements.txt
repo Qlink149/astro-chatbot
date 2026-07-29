@@ -48,6 +48,5 @@ numpy==2.4.6
 PyJHora==4.8.7
 pysweph==2.10.3.6
 
-razorpay==1.4.2
-setuptools>=65.0.0
+# Payment links use httpx → Razorpay REST (no razorpay SDK needed on Vercel)
 
