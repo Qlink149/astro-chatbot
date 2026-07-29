@@ -9,7 +9,7 @@ from kisna_chatbot.ai.types import AgentName, ProviderName
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
 DEFAULT_GROQ_BASE_URL = "https://api.groq.com/openai/v1"
-DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-5"
+DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5"
 
 MAX_OUTPUT_TOKENS_CLASSIFIER = 512
 MAX_OUTPUT_TOKENS_GENERAL = 1024
