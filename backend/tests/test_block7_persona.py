@@ -53,5 +53,10 @@ def test_shared_rules_brand_name():
     assert "Samara, by Clara" in _SHARED_RULES
 
 
+def test_brand_intro_only_not_every_message():
+    assert "introduc" in _SHARED_RULES.lower() or "first" in _SHARED_RULES.lower()
+    assert "not sign" in _SHARED_RULES.lower() or "every message" in _SHARED_RULES.lower()
+
+
 def test_user_gender_never_assumed():
     assert "NEVER ASSUME USER" in _SHARED_RULES.upper()

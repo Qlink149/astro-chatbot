@@ -40,7 +40,6 @@ def send_birth_details_flow(phone_number: str):
                     "Main aapki asli Vedic kundli banakar ek warm, personal reading dungi. 🌙"
                 )
             },
-            "footer": {"text": "Samara by Clara"},
             "action": {
                 "name": "flow",
                 "parameters": {

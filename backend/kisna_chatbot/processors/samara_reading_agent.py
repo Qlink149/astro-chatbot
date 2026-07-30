@@ -1321,7 +1321,6 @@ class SamaraReadingAgent(Processor):
                     ),
                     "display_text": "Pay Now",
                     "url": result["short_url"],
-                    "footer": "Samara by Clara",
                 }
             ]
         except Exception as exc:

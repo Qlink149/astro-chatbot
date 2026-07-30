@@ -17,7 +17,9 @@ def send_cta_url(phone_number: str, bot_response: dict):
     body_text = str(bot_response.get("text") or "").strip()
     display_text = str(bot_response.get("display_text") or "Pay Now").strip()[:20]
     url = str(bot_response.get("url") or "").strip()
-    footer = str(bot_response.get("footer") or "Samara by Clara").strip()
+    footer = str(bot_response.get("footer") or "").strip()
+    if footer and footer.lower() in ("samara by clara", "samara, by clara"):
+        footer = ""  # no brand footer on every CTA
 
     if not body_text or not url:
         raise ValueError("cta_url requires text and url")
@@ -39,7 +41,7 @@ def send_cta_url(phone_number: str, bot_response: dict):
         "interactive": {
             "type": "cta_url",
             "body": {"text": body_text},
-            "footer": {"text": footer},
+            **({"footer": {"text": footer}} if footer else {}),
             "action": {
                 "name": "cta_url",
                 "parameters": {
