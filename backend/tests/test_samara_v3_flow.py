@@ -24,10 +24,18 @@ import kisna_chatbot.processors.samara_reading_agent as mod
 from kisna_chatbot.utils.samara_beats import (
     BEAT_1_AWAITING_CONFIRM,
     BEAT_2_AWAITING_ADVANCE,
+    BEAT_2A_AWAITING_CONFIRM,
+    BEAT_2B_AWAITING_CONFIRM,
+    BEAT_2B_ALT_AWAITING,
+    BEAT_2C_AWAITING_DETAIL,
     BEAT_AWAITING_TOPIC,
     BEAT_POST_FREE_DEEP,
     BTN_BEAT1_YES,
     BTN_BEAT2_NEXT,
+    BTN_BEAT2A_NO,
+    BTN_BEAT2A_YES,
+    BTN_BEAT2B_NO,
+    BTN_BEAT2B_YES,
     BTN_TOPIC_CAREER,
     claim_beat_transition,
     split_whatsapp_text,
@@ -57,6 +65,51 @@ MIN_CHART = {
             "phase": "past",
         }
     ],
+}
+
+DATED_CHART = {
+    **MIN_CHART,
+    "meta": {
+        **MIN_CHART["meta"],
+        "dated_anchors_available": True,
+    },
+    "turning_points": [
+        {
+            "start": "2011-03-15",
+            "end": "2012-01-01",
+            "window_label_en": "early 2011",
+            "window_label_hi": "2011 ke shuruaat",
+            "theme_en": "responsibility",
+            "theme_hi": "zimmedari",
+            "antar_planet_en": "Saturn",
+            "is_relevant": True,
+        },
+        {
+            "start": "2015-09-01",
+            "end": "2016-06-01",
+            "window_label_en": "late 2015",
+            "window_label_hi": "2015 ke ant",
+            "theme_en": "letting go",
+            "theme_hi": "chorna",
+            "antar_planet_en": "Rahu",
+            "is_relevant": True,
+        },
+    ],
+}
+
+NO_TIME_CHART = {
+    "meta": {
+        "birth_year": 1990,
+        "current_age": 35,
+        "has_birth_time": False,
+        "chart_type": "moon_only",
+        "dated_anchors_available": False,
+    },
+    "lagna": None,
+    "rashi": {"sign_en": "Cancer", "sign_hi": "Karka"},
+    "nakshatra": {"name": "Pushya", "pada": 2},
+    "dasha_timeline": MIN_CHART["dasha_timeline"],
+    "turning_points": [],
 }
 
 
@@ -435,3 +488,291 @@ def test_samara_general_client_id_routes_to_anthropic_when_key_set(monkeypatch):
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "")
     cfg.refresh_ai_settings()
+
+
+def test_beat2a_reject_skips_dates_to_topic():
+    async def go():
+        agent = mod.SamaraReadingAgent()
+        profile = {
+            "username": "Rahul",
+            "chart_json": DATED_CHART,
+            "user_language": "hindi",
+            "conversation_beat": BEAT_2A_AWAITING_CONFIRM,
+            "free_reading_used": True,
+        }
+        data = {
+            "client_id": "samara",
+            "phone_number": "919999900001",
+            "user_profile": profile,
+            "messages": {
+                "id": "wamid.2a.no",
+                "type": "interactive",
+                "interactive": {
+                    "button_reply": {"id": BTN_BEAT2A_NO, "title": "Nahi, aisa nahi"}
+                },
+            },
+        }
+        out = await agent.process(data)
+        assert profile["conversation_beat"] == BEAT_AWAITING_TOPIC
+        assert out["bot_response"][-1]["type"] == "quickreply"
+        assert len(out["bot_response"][-1]["options"]) == 5
+
+    _run(go())
+
+
+def test_beat2a_yes_offers_one_dated_window():
+    async def go():
+        agent = mod.SamaraReadingAgent()
+        profile = {
+            "username": "Rahul",
+            "chart_json": DATED_CHART,
+            "user_language": "hindi",
+            "conversation_beat": BEAT_2A_AWAITING_CONFIRM,
+            "free_reading_used": True,
+            "beat2_windows_offered": 0,
+            "beat2_offered_starts": [],
+        }
+        with patch.object(
+            mod,
+            "complete_chat",
+            new=AsyncMock(return_value="2011 ke shuruaat ke aas-paas kuch badla tha?"),
+        ):
+            data = {
+                "client_id": "samara",
+                "phone_number": "919999900001",
+                "user_profile": profile,
+                "messages": {
+                    "id": "wamid.2a.yes",
+                    "type": "interactive",
+                    "interactive": {
+                        "button_reply": {
+                            "id": BTN_BEAT2A_YES,
+                            "title": "Haan, sahi hai",
+                        }
+                    },
+                },
+            }
+            out = await agent.process(data)
+        assert profile["conversation_beat"] == BEAT_2B_AWAITING_CONFIRM
+        assert profile["beat2_windows_offered"] == 1
+        assert profile["beat2_pending_window"]["start"] == "2015-09-01"  # newest first
+        assert BTN_BEAT2B_YES in [
+            o["postbackText"] for o in out["bot_response"][-1]["options"]
+        ]
+        # Engine label must be injectable — LLM mock is opaque; pending window is source of truth
+        assert profile["beat2_pending_window"]["window_label_en"] == "late 2015"
+
+    _run(go())
+
+
+def test_beat2b_reject_offers_one_alt_then_stops():
+    async def go():
+        agent = mod.SamaraReadingAgent()
+        pending = DATED_CHART["turning_points"][1]
+        profile = {
+            "username": "Rahul",
+            "chart_json": DATED_CHART,
+            "user_language": "hindi",
+            "conversation_beat": BEAT_2B_AWAITING_CONFIRM,
+            "free_reading_used": True,
+            "beat2_windows_offered": 1,
+            "beat2_offered_starts": [pending["start"]],
+            "beat2_pending_window": pending,
+            "rejected_windows": [],
+        }
+        with patch.object(
+            mod,
+            "complete_chat",
+            new=AsyncMock(return_value="2011 ke shuruaat — kuch badla?"),
+        ):
+            data = {
+                "client_id": "samara",
+                "phone_number": "919999900001",
+                "user_profile": profile,
+                "messages": {
+                    "id": "wamid.2b.no1",
+                    "type": "interactive",
+                    "interactive": {
+                        "button_reply": {"id": BTN_BEAT2B_NO, "title": "Nahi"}
+                    },
+                },
+            }
+            out = await agent.process(data)
+        assert profile["conversation_beat"] == BEAT_2B_ALT_AWAITING
+        assert len(profile["rejected_windows"]) == 1
+        assert profile["beat2_windows_offered"] == 2
+        assert profile["beat2_pending_window"]["start"] == "2011-03-15"
+
+        # Second reject → topic, no third window
+        data2 = {
+            "client_id": "samara",
+            "phone_number": "919999900001",
+            "user_profile": profile,
+            "messages": {
+                "id": "wamid.2b.no2",
+                "type": "interactive",
+                "interactive": {
+                    "button_reply": {"id": BTN_BEAT2B_NO, "title": "Nahi"}
+                },
+            },
+        }
+        out2 = await agent.process(data2)
+        assert profile["conversation_beat"] == BEAT_AWAITING_TOPIC
+        assert profile["beat2_windows_offered"] == 2
+        assert out2["bot_response"][-1]["type"] == "quickreply"
+
+    _run(go())
+
+
+def test_beat2b_freetext_stores_confirmed_events():
+    async def go():
+        agent = mod.SamaraReadingAgent()
+        pending = DATED_CHART["turning_points"][1]
+        profile = {
+            "username": "Rahul",
+            "chart_json": DATED_CHART,
+            "user_language": "hindi",
+            "conversation_beat": BEAT_2B_AWAITING_CONFIRM,
+            "free_reading_used": True,
+            "beat2_windows_offered": 1,
+            "beat2_offered_starts": [pending["start"]],
+            "beat2_pending_window": pending,
+            "confirmed_events": [],
+        }
+        with patch.object(
+            mod,
+            "complete_chat",
+            new=AsyncMock(return_value="Dhanyavaad — woh waqt bhari thi."),
+        ):
+            data = {
+                "client_id": "samara",
+                "phone_number": "919999900001",
+                "user_profile": profile,
+                "messages": {
+                    "id": "wamid.2b.txt",
+                    "type": "text",
+                    "text": {"body": "Job chhod di thi us saal"},
+                },
+            }
+            out = await agent.process(data)
+        assert len(profile["confirmed_events"]) == 1
+        ev = profile["confirmed_events"][0]
+        assert "Job chhod" in ev["user_description"]
+        assert ev["start_date"] == "2015-09-01"
+        assert profile["conversation_beat"] == BEAT_AWAITING_TOPIC
+        assert out["bot_response"][-1]["type"] == "quickreply"
+
+    _run(go())
+
+
+def test_beat1_dated_chart_enters_beat2a():
+    async def go():
+        agent = mod.SamaraReadingAgent()
+        profile = {
+            "username": "Rahul",
+            "chart_json": DATED_CHART,
+            "user_language": "hindi",
+            "conversation_beat": BEAT_1_AWAITING_CONFIRM,
+            "free_reading_used": True,
+        }
+        with patch.object(
+            mod,
+            "complete_chat",
+            new=AsyncMock(return_value="Ek soft theme — zimmedari badhi."),
+        ):
+            data = {
+                "client_id": "samara",
+                "phone_number": "919999900001",
+                "user_profile": profile,
+                "messages": {
+                    "id": "wamid.b1.dated",
+                    "type": "interactive",
+                    "interactive": {
+                        "button_reply": {"id": BTN_BEAT1_YES, "title": "Haan, bilkul"}
+                    },
+                },
+            }
+            out = await agent.process(data)
+        assert profile["conversation_beat"] == BEAT_2A_AWAITING_CONFIRM
+        assert BTN_BEAT2A_YES in [
+            o["postbackText"] for o in out["bot_response"][-1]["options"]
+        ]
+
+    _run(go())
+
+
+def test_no_time_chart_uses_undated_beat2():
+    async def go():
+        agent = mod.SamaraReadingAgent()
+        profile = {
+            "username": "Rahul",
+            "chart_json": NO_TIME_CHART,
+            "user_language": "hindi",
+            "conversation_beat": BEAT_1_AWAITING_CONFIRM,
+            "free_reading_used": True,
+        }
+        with patch.object(
+            mod,
+            "complete_chat",
+            new=AsyncMock(return_value="Around age 28-33 a heavy chapter."),
+        ):
+            data = {
+                "client_id": "samara",
+                "phone_number": "919999900001",
+                "user_profile": profile,
+                "messages": {
+                    "id": "wamid.b1.notime",
+                    "type": "interactive",
+                    "interactive": {
+                        "button_reply": {"id": BTN_BEAT1_YES, "title": "Haan, bilkul"}
+                    },
+                },
+            }
+            out = await agent.process(data)
+        assert profile["conversation_beat"] == BEAT_2_AWAITING_ADVANCE
+        assert BTN_BEAT2_NEXT in [
+            o["postbackText"] for o in out["bot_response"][-1]["options"]
+        ]
+
+    _run(go())
+
+
+def test_beat2b_bare_haan_awaits_detail():
+    async def go():
+        agent = mod.SamaraReadingAgent()
+        pending = DATED_CHART["turning_points"][0]
+        profile = {
+            "username": "Rahul",
+            "chart_json": DATED_CHART,
+            "user_language": "hindi",
+            "conversation_beat": BEAT_2B_AWAITING_CONFIRM,
+            "free_reading_used": True,
+            "beat2_pending_window": pending,
+            "confirmed_events": [],
+        }
+        with patch.object(
+            mod,
+            "complete_chat",
+            new=AsyncMock(return_value="Agar share karna ho, bataiye."),
+        ):
+            data = {
+                "client_id": "samara",
+                "phone_number": "919999900001",
+                "user_profile": profile,
+                "messages": {
+                    "id": "wamid.2b.yes",
+                    "type": "interactive",
+                    "interactive": {
+                        "button_reply": {
+                            "id": BTN_BEAT2B_YES,
+                            "title": "Haan, hua tha",
+                        }
+                    },
+                },
+            }
+            out = await agent.process(data)
+        assert profile["conversation_beat"] == BEAT_2C_AWAITING_DETAIL
+        assert len(profile["confirmed_events"]) == 1
+        assert out["bot_response"][0]["type"] == "text"
+
+    _run(go())

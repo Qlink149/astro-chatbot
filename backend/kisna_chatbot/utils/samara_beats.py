@@ -13,7 +13,11 @@ from typing import Any
 # ── Beat states on user_profile["conversation_beat"] ─────────────────────────
 BEAT_AWAITING_LANGUAGE = "awaiting_language"
 BEAT_1_AWAITING_CONFIRM = "beat1_awaiting_confirm"
-BEAT_2_AWAITING_ADVANCE = "beat2_awaiting_advance"
+BEAT_2_AWAITING_ADVANCE = "beat2_awaiting_advance"  # undated fallback only
+BEAT_2A_AWAITING_CONFIRM = "beat2a_awaiting_confirm"
+BEAT_2B_AWAITING_CONFIRM = "beat2b_awaiting_confirm"
+BEAT_2B_ALT_AWAITING = "beat2b_alt_awaiting"
+BEAT_2C_AWAITING_DETAIL = "beat2c_awaiting_detail"
 BEAT_AWAITING_TOPIC = "awaiting_topic"
 BEAT_POST_FREE_DEEP = "post_free_deep"
 BEAT_RETURNING_MENU = "returning_menu"
@@ -23,16 +27,25 @@ ACTIVE_INTRO_BEATS = frozenset(
         BEAT_AWAITING_LANGUAGE,
         BEAT_1_AWAITING_CONFIRM,
         BEAT_2_AWAITING_ADVANCE,
+        BEAT_2A_AWAITING_CONFIRM,
+        BEAT_2B_AWAITING_CONFIRM,
+        BEAT_2B_ALT_AWAITING,
+        BEAT_2C_AWAITING_DETAIL,
         BEAT_AWAITING_TOPIC,
     }
 )
 
 MAX_LINES_PER_MESSAGE = 6
+MAX_DATED_WINDOWS_PER_SESSION = 2
 
 # Button postbacks
 BTN_BEAT1_YES = "samara_beat1_yes"
 BTN_BEAT1_SOFT = "samara_beat1_soft"
 BTN_BEAT2_NEXT = "samara_beat2_next"
+BTN_BEAT2A_YES = "samara_beat2a_yes"
+BTN_BEAT2A_NO = "samara_beat2a_no"
+BTN_BEAT2B_YES = "samara_beat2b_yes"
+BTN_BEAT2B_NO = "samara_beat2b_no"
 BTN_TOPIC_CAREER = "samara_topic_career"
 BTN_TOPIC_LOVE = "samara_topic_love"
 BTN_TOPIC_MONEY = "samara_topic_money"
@@ -173,6 +186,115 @@ def beat2_next_button(body: str, *, lang: str) -> dict:
         "samara_beat2_next",
         [{"type": "text", "title": title, "postbackText": BTN_BEAT2_NEXT}],
     )
+
+
+def beat2a_confirm_buttons(body: str, *, lang: str) -> dict:
+    if lang == "english":
+        yes_t, no_t = "Yes, that's right", "No, not really"
+    else:
+        yes_t, no_t = "Haan, sahi hai", "Nahi, aisa nahi"
+    return _quickreply(
+        body,
+        "samara_beat2a_confirm",
+        [
+            {"type": "text", "title": yes_t[:20], "postbackText": BTN_BEAT2A_YES},
+            {"type": "text", "title": no_t[:20], "postbackText": BTN_BEAT2A_NO},
+        ],
+    )
+
+
+def beat2b_confirm_buttons(body: str, *, lang: str) -> dict:
+    if lang == "english":
+        yes_t, no_t = "Yes, something did", "No"
+    else:
+        yes_t, no_t = "Haan, hua tha", "Nahi"
+    return _quickreply(
+        body,
+        "samara_beat2b_confirm",
+        [
+            {"type": "text", "title": yes_t[:20], "postbackText": BTN_BEAT2B_YES},
+            {"type": "text", "title": no_t[:20], "postbackText": BTN_BEAT2B_NO},
+        ],
+    )
+
+
+def parse_beat2a_confirm(messages: dict) -> str | None:
+    """Return 'yes' | 'no' | None."""
+    pid, title = _extract_postback(messages)
+    if pid == BTN_BEAT2A_YES or title in (
+        "haan, sahi hai",
+        "haan sahi hai",
+        "yes, that's right",
+        "yes thats right",
+        "yes",
+        "haan",
+    ):
+        return "yes"
+    if pid == BTN_BEAT2A_NO or title in (
+        "nahi, aisa nahi",
+        "nahi aisa nahi",
+        "no, not really",
+        "no not really",
+        "nahi",
+        "no",
+    ):
+        return "no"
+    return None
+
+
+def parse_beat2b_confirm(messages: dict) -> tuple[str | None, str]:
+    """Return (result, free_text).
+
+    result: 'yes' | 'no' | 'text' | None
+    free_text: user description when they typed instead of tapping.
+    """
+    pid, title = _extract_postback(messages)
+    if pid == BTN_BEAT2B_YES or title in (
+        "haan, hua tha",
+        "haan hua tha",
+        "yes, something did",
+        "yes something did",
+    ):
+        return "yes", ""
+    if pid == BTN_BEAT2B_NO or title in ("nahi", "no"):
+        return "no", ""
+    if isinstance(messages, dict) and messages.get("type") == "text":
+        body = ((messages.get("text") or {}).get("body") or "").strip()
+        if not body:
+            return None, ""
+        low = body.lower()
+        if low in ("nahi", "no", "nahin", "nope"):
+            return "no", ""
+        if low in ("haan", "haan hua tha", "yes", "yes something did"):
+            return "yes", ""
+        # Free-text description = confirmation with detail
+        return "text", body
+    return None, ""
+
+
+def dated_anchors_available(chart: dict | None) -> bool:
+    meta = (chart or {}).get("meta") or {}
+    return bool(meta.get("dated_anchors_available"))
+
+
+def next_turning_point(profile: dict, chart: dict | None) -> dict | None:
+    """Pick strongest unused turning point not in rejected_windows."""
+    points = list((chart or {}).get("turning_points") or [])
+    if not points:
+        return None
+    rejected = {
+        str(r.get("start_date") or r.get("start") or "")
+        for r in (profile.get("rejected_windows") or [])
+        if isinstance(r, dict)
+    }
+    offered = set(profile.get("beat2_offered_starts") or [])
+    # Prefer newest preferred points already curated; walk newest-first then
+    # fall back chronological. turning_points are oldest→newest.
+    for p in reversed(points):
+        start = str(p.get("start") or "")
+        if start and start not in rejected and start not in offered:
+            return p
+    return None
 
 
 def topic_picker_buttons(*, lang: str) -> dict:

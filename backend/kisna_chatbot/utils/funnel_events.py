@@ -12,7 +12,7 @@ from typing import Any
 from kisna_chatbot.database.collections import samara_funnel
 from kisna_chatbot.utils.logger_config import logger
 
-# Canonical event names (Phase 1 + Phase 2 stubs).
+# Canonical event names (beats + monetization + dated-anchor ladder).
 FUNNEL_EVENTS = (
     "birth_flow_opened",
     "birth_flow_completed",
@@ -20,6 +20,14 @@ FUNNEL_EVENTS = (
     "beat1_sent",
     "beat1_confirmed",
     "beat2_sent",
+    "beat_2a_sent",
+    "beat_2a_confirmed",
+    "beat_2a_rejected",
+    "beat_2b_date_offered",
+    "beat_2b_date_confirmed",
+    "beat_2b_date_rejected",
+    "event_description_captured",
+    "alt_window_offered",
     "topic_chosen",
     "free_deep_answer_sent",
     "gate_shown",

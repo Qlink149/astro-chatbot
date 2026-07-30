@@ -51,6 +51,13 @@ def dashboard_stats(client_id: str = Query("samara", description="Tenant client 
             )
             stats["total_beat1_sent"] = stats["funnel"].get("beat1_sent", 0)
             stats["total_topics_chosen"] = stats["funnel"].get("topic_chosen", 0)
+            offered = int(stats["funnel"].get("beat_2b_date_offered", 0) or 0)
+            confirmed = int(stats["funnel"].get("beat_2b_date_confirmed", 0) or 0)
+            stats["date_confirmation_rate"] = confirmed / max(1, offered)
+            stats["total_gate_shown"] = stats["funnel"].get("gate_shown", 0)
+            stats["total_payment_succeeded"] = stats["funnel"].get(
+                "payment_succeeded", 0
+            )
         return stats
     except Exception:
         logger.exception("Failed to fetch dashboard stats")

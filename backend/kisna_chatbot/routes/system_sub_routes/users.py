@@ -101,6 +101,11 @@ def reset_user(
                     "beat_last_inbound_id": None,
                     "chosen_topic": None,
                     "open_loop_summary": None,
+                    "confirmed_events": [],
+                    "rejected_windows": [],
+                    "beat2_windows_offered": 0,
+                    "beat2_offered_starts": [],
+                    "beat2_pending_window": None,
                 },
             },
         )

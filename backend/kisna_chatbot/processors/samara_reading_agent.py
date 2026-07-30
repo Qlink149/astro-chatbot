@@ -18,6 +18,9 @@ from kisna_chatbot.processors.abstract_processor import Processor
 from kisna_chatbot.prompts.samara_reading import (
     SAMARA_BEAT1_IDENTITY_PROMPT,
     SAMARA_BEAT2_PAST_PROMPT,
+    SAMARA_BEAT2A_THEME_PROMPT,
+    SAMARA_BEAT2B_DATE_ASK_PROMPT,
+    SAMARA_BEAT2C_REFLECT_PROMPT,
     SAMARA_BEAT4_DEEP_PROMPT,
     SAMARA_FOLLOWUP_SYSTEM_PROMPT,
     SAMARA_MUHURAT_PROMPT,
@@ -31,19 +34,30 @@ from kisna_chatbot.utils.samara_beats import (
     ACTIVE_INTRO_BEATS,
     BEAT_1_AWAITING_CONFIRM,
     BEAT_2_AWAITING_ADVANCE,
+    BEAT_2A_AWAITING_CONFIRM,
+    BEAT_2B_ALT_AWAITING,
+    BEAT_2B_AWAITING_CONFIRM,
+    BEAT_2C_AWAITING_DETAIL,
     BEAT_AWAITING_LANGUAGE,
     BEAT_AWAITING_TOPIC,
     BEAT_POST_FREE_DEEP,
     BEAT_RETURNING_MENU,
+    MAX_DATED_WINDOWS_PER_SESSION,
     TOPIC_LABELS,
     beat1_confirm_buttons,
     beat2_next_button,
+    beat2a_confirm_buttons,
+    beat2b_confirm_buttons,
     claim_beat_transition,
+    dated_anchors_available,
     inbound_message_id,
     looks_like_greeting,
     mark_beat_send,
+    next_turning_point,
     parse_beat1_confirm,
     parse_beat2_advance,
+    parse_beat2a_confirm,
+    parse_beat2b_confirm,
     parse_paywall_choice,
     parse_pay_intent,
     parse_returning_choice,
@@ -296,6 +310,48 @@ def _lang(profile: dict) -> str:
     return profile.get("user_language") or "hindi"
 
 
+def _confirmed_events_json(profile: dict) -> str:
+    events = profile.get("confirmed_events") or []
+    return json.dumps(events, ensure_ascii=False) if events else "[]"
+
+
+def _record_rejected_window(profile: dict, window: dict | None) -> None:
+    if not window:
+        return
+    rejected = list(profile.get("rejected_windows") or [])
+    start = str(window.get("start") or "")
+    if any(str(r.get("start_date") or "") == start for r in rejected if isinstance(r, dict)):
+        return
+    rejected.append({
+        "start_date": start,
+        "window_label": window.get("window_label_en") or window.get("window_label_hi"),
+        "rejected_at": int(datetime.now(timezone.utc).timestamp()),
+    })
+    profile["rejected_windows"] = rejected
+
+
+def _record_confirmed_event(
+    profile: dict, window: dict | None, description: str = ""
+) -> None:
+    if not window:
+        return
+    events = list(profile.get("confirmed_events") or [])
+    events.append({
+        "window_label": (
+            window.get("window_label_hi")
+            if _lang(profile) != "english"
+            else window.get("window_label_en")
+        ),
+        "start_date": window.get("start"),
+        "antar_planet": window.get("antar_planet_en"),
+        "user_description": (description or "").strip(),
+        "confirmed_at": int(datetime.now(timezone.utc).timestamp()),
+    })
+    profile["confirmed_events"] = events
+    if (description or "").strip():
+        emit_funnel_event("event_description_captured")
+
+
 class SamaraReadingAgent(Processor):
     """Beat-based Samara reading flow for client_id=samara."""
 
@@ -370,10 +426,15 @@ class SamaraReadingAgent(Processor):
         if beat == BEAT_1_AWAITING_CONFIRM:
             conf = parse_beat1_confirm(messages)
             if conf:
+                next_state = (
+                    BEAT_2A_AWAITING_CONFIRM
+                    if dated_anchors_available(profile.get("chart_json"))
+                    else BEAT_2_AWAITING_ADVANCE
+                )
                 if not claim_beat_transition(
                     profile,
                     expected_beats=(BEAT_1_AWAITING_CONFIRM,),
-                    next_beat=BEAT_2_AWAITING_ADVANCE,
+                    next_beat=next_state,
                     inbound_id=inbound_id,
                 ):
                     data["bot_response"] = [
@@ -386,10 +447,9 @@ class SamaraReadingAgent(Processor):
                     ]
                     return data
                 emit_funnel_event("beat1_confirmed", phone_number=phone_number)
-                return await self._send_beat2(
+                return await self._send_beat2_entry(
                     data, profile, phone_number, inbound_id, confirm_signal=conf
                 )
-            # Re-prompt confirm buttons (without regenerating LLM)
             data["bot_response"] = [
                 beat1_confirm_buttons(
                     "Yeh pehchaan theek lagti hai?"
@@ -399,6 +459,149 @@ class SamaraReadingAgent(Processor):
                 )
             ]
             return data
+
+        # ── Dated Beat 2 ladder ─────────────────────────────────────────────
+        if beat == BEAT_2A_AWAITING_CONFIRM:
+            ans = parse_beat2a_confirm(messages)
+            if ans == "yes":
+                if not claim_beat_transition(
+                    profile,
+                    expected_beats=(BEAT_2A_AWAITING_CONFIRM,),
+                    next_beat=BEAT_2B_AWAITING_CONFIRM,
+                    inbound_id=inbound_id,
+                ):
+                    data["bot_response"] = [{"type": "skip"}]
+                    return data
+                emit_funnel_event("beat_2a_confirmed", phone_number=phone_number)
+                return await self._send_beat2b(
+                    data, profile, phone_number, inbound_id, alt=False
+                )
+            if ans == "no":
+                if not claim_beat_transition(
+                    profile,
+                    expected_beats=(BEAT_2A_AWAITING_CONFIRM,),
+                    next_beat=BEAT_AWAITING_TOPIC,
+                    inbound_id=inbound_id,
+                ):
+                    data["bot_response"] = [{"type": "skip"}]
+                    return data
+                emit_funnel_event("beat_2a_rejected", phone_number=phone_number)
+                warm = (
+                    "Har chart alag hota hai — chaliye aage dekhte hain. 🙏"
+                    if _lang(profile) != "english"
+                    else "Every chart is different — let's look ahead. 🙏"
+                )
+                data["bot_response"] = [
+                    {"type": "text", "text": warm},
+                    topic_picker_buttons(lang=_lang(profile)),
+                ]
+                mark_beat_send(profile, BEAT_AWAITING_TOPIC, inbound_id)
+                return data
+            data["bot_response"] = [
+                beat2a_confirm_buttons(
+                    "Yeh theme theek lagti hai?"
+                    if _lang(profile) != "english"
+                    else "Does this theme feel right?",
+                    lang=_lang(profile),
+                )
+            ]
+            return data
+
+        if beat in (BEAT_2B_AWAITING_CONFIRM, BEAT_2B_ALT_AWAITING):
+            result, free_text = parse_beat2b_confirm(messages)
+            pending = profile.get("beat2_pending_window")
+            if result in ("yes", "text"):
+                if not claim_beat_transition(
+                    profile,
+                    expected_beats=(BEAT_2B_AWAITING_CONFIRM, BEAT_2B_ALT_AWAITING),
+                    next_beat=BEAT_2C_AWAITING_DETAIL,
+                    inbound_id=inbound_id,
+                ):
+                    data["bot_response"] = [{"type": "skip"}]
+                    return data
+                emit_funnel_event("beat_2b_date_confirmed", phone_number=phone_number)
+                _record_confirmed_event(profile, pending, free_text)
+                return await self._send_beat2c(
+                    data,
+                    profile,
+                    phone_number,
+                    inbound_id,
+                    description=free_text,
+                    bare_haan=(result == "yes" and not free_text),
+                )
+            if result == "no":
+                emit_funnel_event("beat_2b_date_rejected", phone_number=phone_number)
+                _record_rejected_window(profile, pending)
+                profile["beat2_pending_window"] = None
+                offered = int(profile.get("beat2_windows_offered") or 0)
+                # At most one alternative after first reject
+                if (
+                    beat == BEAT_2B_AWAITING_CONFIRM
+                    and offered < MAX_DATED_WINDOWS_PER_SESSION
+                    and next_turning_point(profile, profile.get("chart_json"))
+                ):
+                    if not claim_beat_transition(
+                        profile,
+                        expected_beats=(BEAT_2B_AWAITING_CONFIRM,),
+                        next_beat=BEAT_2B_ALT_AWAITING,
+                        inbound_id=inbound_id,
+                    ):
+                        data["bot_response"] = [{"type": "skip"}]
+                        return data
+                    emit_funnel_event("alt_window_offered", phone_number=phone_number)
+                    return await self._send_beat2b(
+                        data, profile, phone_number, inbound_id, alt=True
+                    )
+                if not claim_beat_transition(
+                    profile,
+                    expected_beats=(BEAT_2B_AWAITING_CONFIRM, BEAT_2B_ALT_AWAITING),
+                    next_beat=BEAT_AWAITING_TOPIC,
+                    inbound_id=inbound_id,
+                ):
+                    data["bot_response"] = [{"type": "skip"}]
+                    return data
+                warm = (
+                    "Theek hai — har zindagi alag hoti hai. Chaliye aage badhein. 🙏"
+                    if _lang(profile) != "english"
+                    else "That's alright — every life is different. Let's move on. 🙏"
+                )
+                data["bot_response"] = [
+                    {"type": "text", "text": warm},
+                    topic_picker_buttons(lang=_lang(profile)),
+                ]
+                mark_beat_send(profile, BEAT_AWAITING_TOPIC, inbound_id)
+                return data
+            data["bot_response"] = [
+                beat2b_confirm_buttons(
+                    "Us waqt kuch badla tha?"
+                    if _lang(profile) != "english"
+                    else "Did something shift then?",
+                    lang=_lang(profile),
+                )
+            ]
+            return data
+
+        if beat == BEAT_2C_AWAITING_DETAIL:
+            # Any reply (detail or continue) → topic picker
+            if not claim_beat_transition(
+                profile,
+                expected_beats=(BEAT_2C_AWAITING_DETAIL,),
+                next_beat=BEAT_AWAITING_TOPIC,
+                inbound_id=inbound_id,
+            ):
+                data["bot_response"] = [{"type": "skip"}]
+                return data
+            # If they typed more detail, store on last confirmed event
+            if messages.get("type") == "text":
+                body = ((messages.get("text") or {}).get("body") or "").strip()
+                events = list(profile.get("confirmed_events") or [])
+                if body and events and not (events[-1].get("user_description") or "").strip():
+                    events[-1]["user_description"] = body
+                    profile["confirmed_events"] = events
+                    emit_funnel_event(
+                        "event_description_captured", phone_number=phone_number
+                    )
+            return self._send_topic_picker(data, profile)
 
         if beat == BEAT_2_AWAITING_ADVANCE:
             if parse_beat2_advance(messages):
@@ -535,6 +738,7 @@ class SamaraReadingAgent(Processor):
             user_language=lang,
             current_date=now_ctx["current_date"],
             current_age=now_ctx["current_age"],
+            confirmed_events_json=_confirmed_events_json(profile),
         )
         try:
             text = await self._llm(
@@ -566,6 +770,21 @@ class SamaraReadingAgent(Processor):
         data["bot_response"] = chunks
         return data
 
+    async def _send_beat2_entry(
+        self,
+        data: dict,
+        profile: dict,
+        phone_number: str,
+        inbound_id: str,
+        *,
+        confirm_signal: str,
+    ) -> dict:
+        if dated_anchors_available(profile.get("chart_json")):
+            return await self._send_beat2a(data, profile, phone_number, inbound_id)
+        return await self._send_beat2(
+            data, profile, phone_number, inbound_id, confirm_signal=confirm_signal
+        )
+
     async def _send_beat2(
         self,
         data: dict,
@@ -575,6 +794,7 @@ class SamaraReadingAgent(Processor):
         *,
         confirm_signal: str,
     ) -> dict:
+        """Undated Beat 2 fallback (no dated_anchors_available)."""
         chart = profile.get("chart_json")
         now_ctx = _now_context(chart)
         lang = _lang(profile)
@@ -587,6 +807,7 @@ class SamaraReadingAgent(Processor):
             current_date=now_ctx["current_date"],
             current_age=now_ctx["current_age"],
             confirm_signal=confirm_signal,
+            confirmed_events_json=_confirmed_events_json(profile),
         )
         try:
             text = await self._llm(
@@ -614,6 +835,183 @@ class SamaraReadingAgent(Processor):
         data["bot_response"] = chunks
         return data
 
+    async def _send_beat2a(
+        self, data: dict, profile: dict, phone_number: str, inbound_id: str
+    ) -> dict:
+        chart = profile.get("chart_json")
+        now_ctx = _now_context(chart)
+        lang = _lang(profile)
+        themes = [
+            {
+                "theme_en": p.get("theme_en"),
+                "theme_hi": p.get("theme_hi"),
+            }
+            for p in (chart or {}).get("turning_points") or []
+            if isinstance(p, dict)
+        ]
+        instruction = SAMARA_BEAT2A_THEME_PROMPT.format(
+            user_name=profile.get("username") or "dost",
+            user_language=lang,
+            current_date=now_ctx["current_date"],
+            current_age=now_ctx["current_age"],
+            themes_json=json.dumps(themes, ensure_ascii=False),
+            confirmed_events_json=_confirmed_events_json(profile),
+        )
+        try:
+            text = await self._llm(
+                instruction=instruction,
+                user_content="Write Beat 2a soft theme now (no dates).",
+                phone_number=phone_number,
+                agent_display_name="SamaraBeat2a",
+                max_output_tokens=400,
+                use_sonnet=True,
+            )
+        except Exception:
+            logger.exception("Beat2a LLM failed", extra={"phone_number": phone_number})
+            data["bot_response"] = [{"type": "text", "text": ERROR_TEXT}]
+            return data
+
+        chunks = text_responses(text)
+        if chunks:
+            last = chunks[-1]["text"]
+            chunks = chunks[:-1] + [beat2a_confirm_buttons(last, lang=lang)]
+        else:
+            chunks = [beat2a_confirm_buttons(text, lang=lang)]
+
+        # Reset per-chart-session window counters for a fresh dated ladder
+        profile["beat2_windows_offered"] = 0
+        profile["beat2_offered_starts"] = []
+        profile["beat2_pending_window"] = None
+        mark_beat_send(profile, BEAT_2A_AWAITING_CONFIRM, inbound_id)
+        emit_funnel_event("beat_2a_sent", phone_number=phone_number)
+        data["bot_response"] = chunks
+        return data
+
+    async def _send_beat2b(
+        self,
+        data: dict,
+        profile: dict,
+        phone_number: str,
+        inbound_id: str,
+        *,
+        alt: bool,
+    ) -> dict:
+        chart = profile.get("chart_json")
+        lang = _lang(profile)
+        window = next_turning_point(profile, chart)
+        if not window:
+            mark_beat_send(profile, BEAT_AWAITING_TOPIC, inbound_id)
+            warm = (
+                "Chaliye aage dekhte hain. 🙏"
+                if lang != "english"
+                else "Let's look ahead. 🙏"
+            )
+            data["bot_response"] = [
+                {"type": "text", "text": warm},
+                topic_picker_buttons(lang=lang),
+            ]
+            return data
+
+        start = str(window.get("start") or "")
+        offered_starts = list(profile.get("beat2_offered_starts") or [])
+        if start and start not in offered_starts:
+            offered_starts.append(start)
+        profile["beat2_offered_starts"] = offered_starts
+        profile["beat2_windows_offered"] = int(
+            profile.get("beat2_windows_offered") or 0
+        ) + 1
+        profile["beat2_pending_window"] = window
+
+        instruction = SAMARA_BEAT2B_DATE_ASK_PROMPT.format(
+            user_name=profile.get("username") or "dost",
+            user_language=lang,
+            window_label_en=window.get("window_label_en") or "",
+            window_label_hi=window.get("window_label_hi") or "",
+            theme_en=window.get("theme_en") or "",
+            theme_hi=window.get("theme_hi") or "",
+        )
+        try:
+            text = await self._llm(
+                instruction=instruction,
+                user_content="Write Beat 2b dated ask now (ask only).",
+                phone_number=phone_number,
+                agent_display_name="SamaraBeat2b",
+                max_output_tokens=400,
+                use_sonnet=True,
+            )
+        except Exception:
+            logger.exception("Beat2b LLM failed", extra={"phone_number": phone_number})
+            data["bot_response"] = [{"type": "text", "text": ERROR_TEXT}]
+            return data
+
+        chunks = text_responses(text)
+        if chunks:
+            last = chunks[-1]["text"]
+            chunks = chunks[:-1] + [beat2b_confirm_buttons(last, lang=lang)]
+        else:
+            chunks = [beat2b_confirm_buttons(text, lang=lang)]
+
+        next_beat = BEAT_2B_ALT_AWAITING if alt else BEAT_2B_AWAITING_CONFIRM
+        mark_beat_send(profile, next_beat, inbound_id)
+        emit_funnel_event("beat_2b_date_offered", phone_number=phone_number)
+        data["bot_response"] = chunks
+        return data
+
+    async def _send_beat2c(
+        self,
+        data: dict,
+        profile: dict,
+        phone_number: str,
+        inbound_id: str,
+        *,
+        description: str,
+        bare_haan: bool,
+    ) -> dict:
+        lang = _lang(profile)
+        pending = profile.get("beat2_pending_window") or {}
+        window_label = (
+            pending.get("window_label_hi")
+            if lang != "english"
+            else pending.get("window_label_en")
+        ) or ""
+        theme = (
+            pending.get("theme_hi") if lang != "english" else pending.get("theme_en")
+        ) or ""
+        instruction = SAMARA_BEAT2C_REFLECT_PROMPT.format(
+            user_name=profile.get("username") or "dost",
+            user_language=lang,
+            window_label=window_label,
+            theme=theme,
+            user_description=description or "",
+            optional_window_label="",
+        )
+        try:
+            text = await self._llm(
+                instruction=instruction,
+                user_content="Write Beat 2c reflect now.",
+                phone_number=phone_number,
+                agent_display_name="SamaraBeat2c",
+                max_output_tokens=400,
+                use_sonnet=True,
+            )
+        except Exception:
+            logger.exception("Beat2c LLM failed", extra={"phone_number": phone_number})
+            data["bot_response"] = [{"type": "text", "text": ERROR_TEXT}]
+            return data
+
+        profile["beat2_pending_window"] = None
+        chunks = text_responses(text)
+        if bare_haan:
+            # Soft invite already in LLM text; wait for optional detail
+            mark_beat_send(profile, BEAT_2C_AWAITING_DETAIL, inbound_id)
+            data["bot_response"] = chunks
+            return data
+
+        # Free-text already captured — advance to topic picker
+        mark_beat_send(profile, BEAT_AWAITING_TOPIC, inbound_id)
+        data["bot_response"] = chunks + [topic_picker_buttons(lang=lang)]
+        return data
+
     def _send_topic_picker(self, data: dict, profile: dict) -> dict:
         mark_beat_send(profile, BEAT_AWAITING_TOPIC)
         data["bot_response"] = [topic_picker_buttons(lang=_lang(profile))]
@@ -636,6 +1034,7 @@ class SamaraReadingAgent(Processor):
             topic_key=topic,
             topic_label=label,
             chat_history_snippet=history_snippet,
+            confirmed_events_json=_confirmed_events_json(profile),
         )
         try:
             text = await self._llm(
@@ -881,6 +1280,12 @@ class SamaraReadingAgent(Processor):
         profile["open_loop_summary"] = None
         profile["chosen_topic"] = None
         profile["beat_last_inbound_id"] = None
+        # Clear dated-anchor memory on chart recompute
+        profile["confirmed_events"] = []
+        profile["rejected_windows"] = []
+        profile["beat2_windows_offered"] = 0
+        profile["beat2_offered_starts"] = []
+        profile["beat2_pending_window"] = None
         emit_funnel_event("birth_flow_completed", phone_number=phone_number)
         logger.info(
             "Samara chart computed",
@@ -975,6 +1380,7 @@ async def deliver_paid_deep_answer(
         current_year=now_ctx["current_year"],
         current_age=now_ctx["current_age"],
         chat_history_snippet=history_snippet,
+        confirmed_events_json=_confirmed_events_json(profile),
     )
     sonnet, haiku = _sonnet_models()
     try:

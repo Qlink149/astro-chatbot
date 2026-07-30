@@ -361,6 +361,9 @@ export default function Overview() {
         <StatCard label="Beat 1 sent" description="Identity punches delivered" icon={Sparkles} color={statIconClasses('soft')} count={stats?.total_beat1_sent ?? stats?.funnel?.beat1_sent} loading={loading} />
         <StatCard label="Topics chosen" description="Topic picker taps" icon={HelpCircle} color={statIconClasses('warning')} count={stats?.total_topics_chosen ?? stats?.funnel?.topic_chosen} loading={loading} />
         <StatCard label="Free deep answers" description="Beat 4 answers delivered" icon={Sparkles} color={statIconClasses('success')} count={stats?.total_free_deep_answers ?? stats?.funnel?.free_deep_answer_sent} loading={loading} />
+        <StatCard label="Date confirm rate" description="Beat 2b confirmed / offered" icon={Sparkles} color={statIconClasses('success')} count={loading ? null : (stats?.date_confirmation_rate != null ? `${Math.round(stats.date_confirmation_rate * 100)}%` : '—')} loading={loading} />
+        <StatCard label="Gate shown" description="Paywall impressions" icon={HelpCircle} color={statIconClasses('warning')} count={stats?.total_gate_shown ?? stats?.funnel?.gate_shown} loading={loading} />
+        <StatCard label="Payments succeeded" description="Razorpay success events" icon={Zap} color={statIconClasses('success')} count={stats?.total_payment_succeeded ?? stats?.funnel?.payment_succeeded} loading={loading} />
         <StatCard label="Follow-up Questions" description="Questions after free path" icon={HelpCircle} color={statIconClasses('warning')} count={stats?.total_followup_questions} loading={loading} />
         <StatCard label="AI Response Time" description="Average across all messages" icon={Zap} color={statIconClasses('success')} count={loading ? null : formatResponseTime(stats?.avg_ai_response_time_ms)} loading={loading} />
         <RatingsCard ratings={stats?.ratings} loading={loading} />
