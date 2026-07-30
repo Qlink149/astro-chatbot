@@ -121,7 +121,10 @@ GREETING_TEXT = (
     "Namaste 🙏 Main Samara hoon — aapki personal Vedic astrology guide, by Clara. ✨\n\n"
     "Aapki asli janam kundli banane ke liye mujhe bas aapki birth details chahiye — "
     "date, time aur place of birth. Neeche form khol kar share kar dijiye, "
-    "phir main aapke liye ek warm, personal reading likhungi. 🌙"
+    "phir main aapke liye ek warm, personal reading likhungi. 🌙\n\n"
+    "📝 Aapki details sirf aapki reading ke liye use hongi. "
+    "Yeh reflection aur enjoyment ke liye hai — medical, legal ya financial advice nahi. "
+    "Kabhi bhi 'delete my data' likh kar apna data hata sakte hain."
 )
 
 NUDGE_TEXT = (
@@ -394,6 +397,29 @@ def _record_confirmed_event(
         emit_funnel_event("event_description_captured")
 
 
+_DELETE_DATA_PHRASES = frozenset({
+    "delete my data", "mera data delete karo", "data delete",
+    "delete data", "mera data hatao", "data hatao",
+    "remove my data", "erase my data",
+})
+
+DATA_DELETED_TEXT_HI = (
+    "Aapka data delete kar diya gaya hai 🙏 "
+    "Birth details, chart, aur chat history sab hata di gayi hai. "
+    "Agar aap phir se shuru karna chahein, toh 'hi' likh dijiye. 🌙"
+)
+DATA_DELETED_TEXT_EN = (
+    "Your data has been deleted 🙏 "
+    "Birth details, chart, and chat history have all been removed. "
+    "If you'd like to start again, just type 'hi'. 🌙"
+)
+
+
+def _is_delete_data_request(text: str) -> bool:
+    t = (text or "").strip().lower().rstrip("!.?")
+    return t in _DELETE_DATA_PHRASES
+
+
 class SamaraReadingAgent(Processor):
     """Beat-based Samara reading flow for client_id=samara."""
 
@@ -462,6 +488,10 @@ class SamaraReadingAgent(Processor):
                 confirm = LANG_SWITCH_CONFIRM_EN if lang_switch == "english" else LANG_SWITCH_CONFIRM_HI
                 data["bot_response"] = [{"type": "text", "text": confirm}]
                 return data
+
+        # ── Data deletion (DPDP) ──────────────────────────────────────
+        if inbound_text and _is_delete_data_request(inbound_text):
+            return self._handle_data_deletion(data, profile, phone_number)
 
         # ── Restart intent (preserve credits + ledger) ─────────────────
         if inbound_text and detect_restart_intent(inbound_text):
@@ -1456,6 +1486,32 @@ class SamaraReadingAgent(Processor):
         if upsell:
             responses.extend(upsell)
         data["bot_response"] = responses
+        return data
+
+    def _handle_data_deletion(
+        self, data: dict, profile: dict, phone_number: str
+    ) -> dict:
+        """Purge PII, chart, chat. Keep anonymised ledger (amounts/types/payment_ids)."""
+        lang = _lang(profile)
+        anonymised_ledger = []
+        for entry in (profile.get("credit_ledger") or []):
+            if isinstance(entry, dict):
+                anonymised_ledger.append({
+                    "type": entry.get("type"),
+                    "amount": entry.get("amount"),
+                    "source": entry.get("source"),
+                    "payment_id": entry.get("payment_id"),
+                    "timestamp": entry.get("timestamp"),
+                })
+        for key in list(profile.keys()):
+            if key in ("credits", "credit_ledger", "client_id", "phone_number", "_id"):
+                continue
+            profile.pop(key, None)
+        profile["credit_ledger"] = anonymised_ledger
+        profile["data_deleted_at"] = int(datetime.now(timezone.utc).timestamp())
+        emit_funnel_event("data_deleted", phone_number=phone_number)
+        confirm = DATA_DELETED_TEXT_EN if lang == "english" else DATA_DELETED_TEXT_HI
+        data["bot_response"] = [{"type": "text", "text": confirm}]
         return data
 
     def _handle_paywall_later(

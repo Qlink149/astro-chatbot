@@ -114,7 +114,23 @@ Login with `SUPER_ADMIN_USERNAME` / `SUPER_ADMIN_PASSWORD`.
 
 ---
 
-## 7. Assumptions / known drift
+## 7. Data retention & deletion (DPDP)
+
+- User can type **"delete my data"** or **"mera data delete karo"** at any time.
+  PII, birth details, chart, chat history, confirmed events are purged immediately.
+  Anonymised credit ledger entries (amounts, types, payment IDs) are retained for
+  accounting integrity — phone numbers are stripped from content.
+- Inactive accounts (no inbound message for **24 months**) are eligible for
+  automated purge. Implementation: a scheduled job should scan for
+  `last_message_at < now - 24 months` and apply the same anonymised-ledger
+  purge as the in-chat deletion flow.
+- Samara's greeting includes a consent one-liner and disclaimer:
+  reflection/enjoyment purpose only, not medical/legal/financial advice, data
+  deletable on request.
+
+---
+
+## 8. Assumptions / known drift
 
 1. **LLM**: Samara `GENERAL` prefers Anthropic Haiku (`ANTHROPIC_CHAT_MODEL`) when
    the key is set; otherwise falls back to `AI_PROVIDER_GENERAL` (OpenAI/Groq).
