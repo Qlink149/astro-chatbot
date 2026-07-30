@@ -26,7 +26,11 @@ from kisna_chatbot.prompts.samara_reading import (
     SAMARA_MUHURAT_PROMPT,
 )
 from kisna_chatbot.payments.credit_ledger import debit_credit, get_credit_balance
-from kisna_chatbot.utils.format_chathistory import format_recent_history_str
+from kisna_chatbot.utils.format_chathistory import (
+    format_prompt_history,
+    format_recent_history_str,
+    maybe_refresh_conversation_summary,
+)
 from kisna_chatbot.utils.funnel_events import emit_funnel_event
 from kisna_chatbot.utils.geocode_in import geocode_place, timezone_offset_for
 from kisna_chatbot.utils.distress import (
@@ -98,8 +102,9 @@ def _now_context(chart: dict | None) -> dict:
 
 
 def _sonnet_models() -> tuple[str, str]:
-    settings = get_ai_settings()
-    return settings["anthropic_chat_model_sonnet"], settings["anthropic_chat_model"]
+    from kisna_chatbot.ai.samara_models import haiku_model_id, sonnet_model_id
+
+    return sonnet_model_id(), haiku_model_id()
 
 
 _TIME_RE = re.compile(r"^\s*([01]?\d|2[0-3])[:.\s]([0-5]\d)\s*$")
@@ -386,7 +391,7 @@ class SamaraReadingAgent(Processor):
                     phone_number=phone_number,
                     agent_display_name="SamaraDistress",
                     max_output_tokens=80,
-                    use_sonnet=False,
+                    purpose="distress",
                 )
 
             flagged = await assess_distress(
@@ -733,9 +738,14 @@ class SamaraReadingAgent(Processor):
         phone_number: str,
         agent_display_name: str,
         max_output_tokens: int,
-        use_sonnet: bool,
+        purpose: str = "beat1",
+        use_sonnet: bool | None = None,
     ) -> str:
-        sonnet, haiku = _sonnet_models()
+        from kisna_chatbot.ai.samara_models import samara_model_for
+
+        if use_sonnet is not None:
+            purpose = "beat1" if use_sonnet else "muhurat"
+        primary, fallback = samara_model_for(purpose)  # type: ignore[arg-type]
         kwargs = {
             "agent": AgentName.GENERAL,
             "agent_display_name": agent_display_name,
@@ -744,12 +754,10 @@ class SamaraReadingAgent(Processor):
             "max_output_tokens": max_output_tokens,
             "phone_number": phone_number,
             "client_id": "samara",
+            "model": primary,
         }
-        if use_sonnet:
-            kwargs["model"] = sonnet
-            kwargs["model_fallback"] = haiku
-        else:
-            kwargs["model"] = haiku
+        if fallback:
+            kwargs["model_fallback"] = fallback
         return await complete_chat(**kwargs)
 
     async def _send_beat1(
@@ -782,7 +790,7 @@ class SamaraReadingAgent(Processor):
                 phone_number=phone_number,
                 agent_display_name="SamaraBeat1",
                 max_output_tokens=400,
-                use_sonnet=True,
+                purpose="beat1",
             )
         except Exception:
             logger.exception("Beat1 LLM failed", extra={"phone_number": phone_number})
@@ -851,7 +859,7 @@ class SamaraReadingAgent(Processor):
                 phone_number=phone_number,
                 agent_display_name="SamaraBeat2",
                 max_output_tokens=500,
-                use_sonnet=True,
+                purpose="beat2",
             )
         except Exception:
             logger.exception("Beat2 LLM failed", extra={"phone_number": phone_number})
@@ -899,7 +907,7 @@ class SamaraReadingAgent(Processor):
                 phone_number=phone_number,
                 agent_display_name="SamaraBeat2a",
                 max_output_tokens=400,
-                use_sonnet=True,
+                purpose="beat2a",
             )
         except Exception:
             logger.exception("Beat2a LLM failed", extra={"phone_number": phone_number})
@@ -972,7 +980,7 @@ class SamaraReadingAgent(Processor):
                 phone_number=phone_number,
                 agent_display_name="SamaraBeat2b",
                 max_output_tokens=400,
-                use_sonnet=True,
+                purpose="beat2b",
             )
         except Exception:
             logger.exception("Beat2b LLM failed", extra={"phone_number": phone_number})
@@ -1027,7 +1035,7 @@ class SamaraReadingAgent(Processor):
                 phone_number=phone_number,
                 agent_display_name="SamaraBeat2c",
                 max_output_tokens=400,
-                use_sonnet=True,
+                purpose="beat2c",
             )
         except Exception:
             logger.exception("Beat2c LLM failed", extra={"phone_number": phone_number})
@@ -1058,7 +1066,7 @@ class SamaraReadingAgent(Processor):
         chart = profile.get("chart_json")
         now_ctx = _now_context(chart)
         lang = _lang(profile)
-        history_snippet = format_recent_history_str(profile, n=8) or "(no prior turns)"
+        history_snippet = format_prompt_history(profile) or "(no prior turns)"
         label = TOPIC_LABELS.get(topic, topic)
         instruction = SAMARA_BEAT4_DEEP_PROMPT.format(
             chart_json=json.dumps(chart, ensure_ascii=False),
@@ -1078,7 +1086,7 @@ class SamaraReadingAgent(Processor):
                 phone_number=phone_number,
                 agent_display_name="SamaraBeat4",
                 max_output_tokens=600,
-                use_sonnet=True,
+                purpose="beat4",
             )
         except Exception:
             logger.exception("Beat4 LLM failed", extra={"phone_number": phone_number})
@@ -1115,7 +1123,7 @@ class SamaraReadingAgent(Processor):
                 phone_number=phone_number,
                 agent_display_name="SamaraMuhurat",
                 max_output_tokens=350,
-                use_sonnet=False,
+                purpose="muhurat",
             )
         except Exception:
             logger.exception("Muhurat LLM failed", extra={"phone_number": phone_number})
@@ -1348,6 +1356,20 @@ class SamaraReadingAgent(Processor):
             ]
             return data
 
+        async def _summary_llm(instruction: str, user_content: str) -> str:
+            return await self._llm(
+                instruction=instruction,
+                user_content=user_content,
+                phone_number=phone_number,
+                agent_display_name="SamaraSummary",
+                max_output_tokens=200,
+                purpose="summary",
+            )
+
+        await maybe_refresh_conversation_summary(
+            profile, classify_fn=_summary_llm
+        )
+
         # Gate ON: free deep used + zero balance → paywall (not before).
         if profile.get("free_deep_answer_used") and get_credit_balance(profile) <= 0:
             profile["pending_deep_question"] = question
@@ -1406,7 +1428,7 @@ async def deliver_paid_deep_answer(
     chart = profile.get("chart_json")
     now_ctx = _now_context(chart)
     lang = _lang(profile)
-    history_snippet = format_recent_history_str(profile, n=10) or "(no prior turns)"
+    history_snippet = format_prompt_history(profile) or "(no prior turns)"
     instruction = SAMARA_FOLLOWUP_SYSTEM_PROMPT.format(
         chart_json=json.dumps(chart, ensure_ascii=False),
         user_name=profile.get("username") or "dost",
@@ -1417,7 +1439,10 @@ async def deliver_paid_deep_answer(
         chat_history_snippet=history_snippet,
         confirmed_events_json=_confirmed_events_json(profile),
     )
-    sonnet, haiku = _sonnet_models()
+    from kisna_chatbot.ai.samara_models import samara_model_for
+
+    purpose = "paid_deep" if debit else "muhurat"
+    primary, fallback = samara_model_for(purpose)
     try:
         text = await complete_chat(
             agent=AgentName.GENERAL,
@@ -1427,8 +1452,8 @@ async def deliver_paid_deep_answer(
             max_output_tokens=500,
             phone_number=phone_number,
             client_id="samara",
-            model=sonnet if debit else haiku,
-            model_fallback=haiku if debit else None,
+            model=primary,
+            model_fallback=fallback,
         )
     except Exception:
         logger.exception(

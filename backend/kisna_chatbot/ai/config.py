@@ -63,11 +63,16 @@ def get_ai_settings() -> dict:
         "anthropic_chat_model": _env(
             "ANTHROPIC_CHAT_MODEL", DEFAULT_ANTHROPIC_MODEL
         ),
-        # Beats 1 / 2 / 4 use Sonnet when set; Haiku remains the functional default
-        # and the fallback on Sonnet errors.
+        # Explicit Haiku alias; falls back to ANTHROPIC_CHAT_MODEL when unset.
+        "anthropic_chat_model_haiku": _env("ANTHROPIC_CHAT_MODEL_HAIKU")
+        or _env("ANTHROPIC_CHAT_MODEL", DEFAULT_ANTHROPIC_MODEL),
+        # Beats 1 / 2 / 4 + paid deep use Sonnet; Haiku for classifiers / muhurat
+        # and as fallback on Sonnet errors.
         "anthropic_chat_model_sonnet": _env(
             "ANTHROPIC_CHAT_MODEL_SONNET", DEFAULT_ANTHROPIC_SONNET_MODEL
         ),
+        "samara_history_window": int(_env("SAMARA_HISTORY_WINDOW", "10")),
+        "samara_daily_gen_cap": int(_env("SAMARA_DAILY_GEN_CAP", "40")),
         "max_tokens_classifier": int(
             _env("AI_MAX_TOKENS_CLASSIFIER", str(MAX_OUTPUT_TOKENS_CLASSIFIER))
         ),
