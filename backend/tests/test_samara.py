@@ -1,4 +1,7 @@
-"""End-to-end tests for Samara (Clara) client — webhook, chart, paywall, dashboard APIs."""
+"""End-to-end tests for Samara (Clara) client — webhook, chart, follow-ups, dashboard APIs.
+
+Paywall is OFF in the live agent; follow-up tests assert ungated answers.
+"""
 import json
 import os
 import time
@@ -223,9 +226,10 @@ class TestNoBirthTime:
         assert chart.get("lagna") is None, f"lagna should be None, got {chart.get('lagna')}"
 
 
-# ─── Test 4: Paywall + credit-gated followup ─────────────────────────────────
+# ─── Test 4: Follow-ups ungated (paywall OFF until Phase 2) ──────────────────
 class TestPaywallAndFollowup:
-    def test_paywall_and_credit_grant(self, mongo):
+    def test_followup_not_paywalled_when_credits_zero(self, mongo):
+        """Paywall is intentionally OFF. Zero credits must still get a real answer."""
         phone = "919876500013"
         mongo.users.delete_one({"phone_number": phone, "client_id": "samara"})
         _post_webhook(_text_webhook(phone, "Hi"))
@@ -246,36 +250,36 @@ class TestPaywallAndFollowup:
         )
         assert u is not None, "free reading did not complete"
 
-        # Ensure credits=0
-        mongo.users.update_one({"_id": u["_id"]}, {"$set": {"credits": 0}})
-
-        # Send a followup text -> should get paywall
+        mongo.users.update_one(
+            {"_id": u["_id"]},
+            {"$set": {"credits": 0, "followup_questions_asked": 0}},
+        )
         _post_webhook(_text_webhook(phone, "Career kaisa rahega?"))
 
-        def paywall_check():
+        def followup_check():
             u2 = mongo.users.find_one({"_id": u["_id"]})
+            if int(u2.get("followup_questions_asked") or 0) < 1:
+                return None
             ch = u2.get("chat_history") or []
-            last_bots = [str(m.get("content") or "") for m in ch[-4:] if m.get("role") == "assistant"]
-            joined = " ".join(last_bots)
-            if "₹49" in joined or "sawaal" in joined:
+            last_bots = [
+                str(m.get("content") or "")
+                for m in ch[-4:]
+                if m.get("role") == "assistant"
+            ]
+            joined = " ".join(last_bots).lower()
+            # Must NOT be the dead paywall / "coming soon" copy
+            if "coming soon" in joined:
+                return None
+            if "₹49" in joined and "credits chahiye" in joined:
+                return None
+            if last_bots:
                 return u2
             return None
 
-        u_pay = _wait_for(paywall_check, timeout=20, interval=1.5)
-        assert u_pay is not None, "paywall message not observed"
-
-        # Grant 2 credits and send another followup
-        mongo.users.update_one({"_id": u["_id"]}, {"$set": {"credits": 2, "followup_questions_asked": 0}})
-        _post_webhook(_text_webhook(phone, "Shaadi kab hogi?"))
-
-        def followup_check():
-            u3 = mongo.users.find_one({"_id": u["_id"]})
-            if u3.get("credits") == 1 and int(u3.get("followup_questions_asked") or 0) >= 1:
-                return u3
-            return None
-
-        u_fu = _wait_for(followup_check, timeout=35, interval=2)
-        assert u_fu is not None, f"credits not decremented; state={mongo.users.find_one({'_id': u['_id']}, {'credits':1,'followup_questions_asked':1})}"
+        u_fu = _wait_for(followup_check, timeout=45, interval=2)
+        assert u_fu is not None, "follow-up answer not observed (paywall should be OFF)"
+        # Credits must not be decremented while paywall is off
+        assert int(u_fu.get("credits") or 0) == 0
 
 
 # ─── Test 5: Geocode failure ─────────────────────────────────────────────────

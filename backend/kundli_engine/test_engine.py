@@ -26,9 +26,16 @@ def test_with_time():
     chart = compute_chart(b)
     show("TEST 1 — full chart (birth time known)", chart)
     assert chart["meta"]["has_birth_time"] is True
+    assert chart["meta"]["birth_year"] == 1869
+    assert isinstance(chart["meta"]["current_age"], int)
     assert chart["lagna"]["sign_en"] == "Virgo", chart["lagna"]
     assert chart["rashi"]["sign_en"] == "Cancer", chart["rashi"]
     assert len(chart["dasha_timeline"]) == 9
+    for period in chart["dasha_timeline"]:
+        assert "age_start" in period and "age_end" in period
+        assert "starts_before_birth" in period and "is_relevant" in period
+        assert isinstance(period["starts_before_birth"], bool)
+        assert isinstance(period["is_relevant"], bool)
     print("\n[PASS] Lagna=Virgo, Rashi=Cancer, 9 dasha periods — matches documented chart.")
 
 
