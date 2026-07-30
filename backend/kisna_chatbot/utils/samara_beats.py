@@ -299,48 +299,27 @@ def next_turning_point(profile: dict, chart: dict | None) -> dict | None:
 
 def topic_picker_buttons(*, lang: str) -> dict:
     if lang == "english":
-        text = "Which one area should we look at more closely?"
-        labels = {
-            "career": "Career",
-            "love": "Love & marriage",
-            "money": "Money",
-            "family": "Home & family",
-            "decision": "Big decision",
-        }
+        text = "Which area should we look at more closely?"
+        options = [
+            ("Career", BTN_TOPIC_CAREER),
+            ("Love & marriage", BTN_TOPIC_LOVE),
+            ("Money", BTN_TOPIC_MONEY),
+        ]
     else:
         text = "Kaunsa ek area aur gehraai se dekhna hai?"
-        labels = TOPIC_LABELS
+        options = [
+            ("Career", BTN_TOPIC_CAREER),
+            ("Shaadi-Pyaar", BTN_TOPIC_LOVE),
+            ("Paisa", BTN_TOPIC_MONEY),
+        ]
     return _quickreply(
         text,
         "samara_topic_pick",
         [
-            {
-                "type": "text",
-                "title": labels["career"][:20],
-                "postbackText": BTN_TOPIC_CAREER,
-            },
-            {
-                "type": "text",
-                "title": labels["love"][:20],
-                "postbackText": BTN_TOPIC_LOVE,
-            },
-            {
-                "type": "text",
-                "title": labels["money"][:20],
-                "postbackText": BTN_TOPIC_MONEY,
-            },
-            {
-                "type": "text",
-                "title": labels["family"][:20],
-                "postbackText": BTN_TOPIC_FAMILY,
-            },
-            {
-                "type": "text",
-                "title": labels["decision"][:20],
-                "postbackText": BTN_TOPIC_DECISION,
-            },
+            {"type": "text", "title": t[:20], "postbackText": p}
+            for t, p in options
         ],
-        caption="Pick one topic",
+        caption="Career / Love / Money — tap one",
     )
 
 

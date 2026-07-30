@@ -97,3 +97,5 @@ docker-compose.override.yml
 
 # Chroma / vector store local cache (if used locally)
 .chroma/
+
+.vercel

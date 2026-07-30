@@ -326,7 +326,7 @@ def test_beat2_advance_shows_topic_picker():
         out = await agent.process(data)
         assert profile["conversation_beat"] == BEAT_AWAITING_TOPIC
         assert out["bot_response"][0]["type"] == "quickreply"
-        assert len(out["bot_response"][0]["options"]) == 5
+        assert len(out["bot_response"][0]["options"]) == 3  # Meta max
 
     _run(go())
 
@@ -515,7 +515,7 @@ def test_beat2a_reject_skips_dates_to_topic():
         out = await agent.process(data)
         assert profile["conversation_beat"] == BEAT_AWAITING_TOPIC
         assert out["bot_response"][-1]["type"] == "quickreply"
-        assert len(out["bot_response"][-1]["options"]) == 5
+        assert len(out["bot_response"][-1]["options"]) == 3  # Meta max
 
     _run(go())
 
