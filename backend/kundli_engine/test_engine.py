@@ -36,6 +36,10 @@ def test_with_time():
         assert "starts_before_birth" in period and "is_relevant" in period
         assert isinstance(period["starts_before_birth"], bool)
         assert isinstance(period["is_relevant"], bool)
+    assert "houses" in chart
+    assert chart["houses"]["system"] == "whole_sign"
+    assert "1" in chart["houses"]["bhavas"]
+    assert "planet_houses" in chart["houses"]
     print("\n[PASS] Lagna=Virgo, Rashi=Cancer, 9 dasha periods — matches documented chart.")
 
 
@@ -50,9 +54,10 @@ def test_without_time():
     assert chart["meta"]["has_birth_time"] is False
     assert chart["meta"]["chart_type"] == "surya_kundli"
     assert chart["lagna"] is None
+    assert "houses" not in chart, "houses must be absent when birth time unknown"
     assert chart["meta"]["note_if_no_time"] is not None
     assert chart["surya_rashi"]["sign_en"] is not None
-    print("\n[PASS] No time -> Lagna omitted, surya_kundli, honest note present.")
+    print("\n[PASS] No time -> Lagna omitted, houses absent, surya_kundli, honest note present.")
 
 
 if __name__ == "__main__":

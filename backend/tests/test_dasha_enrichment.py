@@ -96,6 +96,16 @@ def test_starts_before_birth_flag_consistency(full_chart):
 def test_no_time_omits_lagna_keeps_dasha_meta(no_time_chart):
     assert no_time_chart["lagna"] is None
     assert no_time_chart["meta"]["chart_type"] == "surya_kundli"
+    assert "houses" not in no_time_chart
     assert no_time_chart["meta"]["birth_year"] == 1990
     assert isinstance(no_time_chart["meta"]["current_age"], int)
     assert len(no_time_chart["dasha_timeline"]) == 9
+
+
+def test_full_chart_includes_houses(full_chart):
+    assert "houses" in full_chart
+    houses = full_chart["houses"]
+    assert houses["system"] == "whole_sign"
+    assert len(houses["bhavas"]) == 12
+    assert "Moon" in houses["planet_houses"]
+    assert 1 <= houses["planet_houses"]["Moon"] <= 12

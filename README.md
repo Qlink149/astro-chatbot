@@ -109,7 +109,8 @@ Login with `SUPER_ADMIN_USERNAME` / `SUPER_ADMIN_PASSWORD`.
 - Each dasha period includes `age_start`, `age_end`, `starts_before_birth`,
   `is_relevant` (recent adult window), `phase`, `lived_from_age`.
 - `meta.birth_year` and `meta.current_age` are always set.
-- No birth time → no Lagna, no estimated houses later; honesty note in `meta.note_if_no_time`.
+- No birth time → no Lagna, **no houses key**, honesty note in `meta.note_if_no_time`.
+- With birth time → whole-sign `houses` table (`bhavas` + `planet_houses`) from Lagna.
 
 ---
 

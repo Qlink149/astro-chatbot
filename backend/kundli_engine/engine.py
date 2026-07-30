@@ -299,4 +299,45 @@ def compute_chart(birth: BirthDetails) -> dict:
         "planets": planets_out,
         "dasha_timeline": dasha_timeline,
     }
+    # Houses / bhava — ONLY when birth time is known (whole-sign from Lagna).
+    # When time is unknown, omit the key entirely — never estimate.
+    if birth.has_time and lagna_out is not None:
+        chart["houses"] = _whole_sign_houses(lagna_out, planets_out)
     return chart
+
+
+def _whole_sign_houses(lagna: dict, planets: dict) -> dict:
+    """Whole-sign bhava table from Lagna (Vedic). Engine-side only.
+
+    Returns:
+      {
+        "system": "whole_sign",
+        "lagna_sign_en": ...,
+        "bhavas": { "1": {"sign_en", "sign_hi", "sign_index", "planets": [...]}, ... },
+        "planet_houses": { "Sun": 1, "Moon": 10, ... }
+      }
+    """
+    lagna_idx = int(lagna["sign_index"])
+    bhavas: dict = {}
+    for h in range(1, 13):
+        sign_idx = (lagna_idx + h - 1) % 12
+        bhavas[str(h)] = {
+            "sign_en": SIGNS_EN[sign_idx],
+            "sign_hi": SIGNS_HI[sign_idx],
+            "sign_index": sign_idx,
+            "planets": [],
+        }
+    planet_houses: dict = {}
+    for name, pos in (planets or {}).items():
+        if not isinstance(pos, dict) or pos.get("sign_index") is None:
+            continue
+        house_num = ((int(pos["sign_index"]) - lagna_idx) % 12) + 1
+        planet_houses[name] = house_num
+        bhavas[str(house_num)]["planets"].append(name)
+    return {
+        "system": "whole_sign",
+        "lagna_sign_en": lagna.get("sign_en"),
+        "lagna_sign_hi": lagna.get("sign_hi"),
+        "bhavas": bhavas,
+        "planet_houses": planet_houses,
+    }
