@@ -35,6 +35,12 @@ FUNNEL_EVENTS = (
     "payment_succeeded",
     "paid_answer_delivered",
     "distress_flagged",
+    "restart",
+    "language_switched",
+    "second_pack_offered",
+    "top_up_offered",
+    "daily_cap_hit",
+    "data_deleted",
 )
 
 

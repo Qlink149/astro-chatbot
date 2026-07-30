@@ -169,16 +169,17 @@ def _send_payment_confirmation_and_resume(phone_number: str, client_id: str) -> 
             send_text_message_with_retry,
         )
 
-        send_text_message_with_retry(
-            phone_number=phone_number,
-            bot_response={
-                "type": "text",
-                "text": (
-                    "Payment mil gaya 🙏 Credits add ho gaye hain. "
-                    "Main wahi baat aage badhati hoon — aapko sawaal dobara nahi likhna. 🌙"
-                ),
-            },
+        from kisna_chatbot.utils.samara_beats import text_responses
+
+        confirm_msg = (
+            "Payment mil gaya 🙏 Credits add ho gaye hain. "
+            "Main wahi baat aage badhati hoon — aapko sawaal dobara nahi likhna. 🌙"
         )
+        for chunk in text_responses(confirm_msg):
+            send_text_message_with_retry(
+                phone_number=phone_number,
+                bot_response=chunk,
+            )
 
         user = users.find_one(
             {"phone_number": phone_number, "client_id": client_id}
@@ -244,10 +245,11 @@ def _send_payment_confirmation_and_resume(phone_number: str, client_id: str) -> 
                 }
             },
         )
-        send_text_message_with_retry(
-            phone_number=phone_number,
-            bot_response={"type": "text", "text": text},
-        )
+        for chunk in text_responses(text):
+            send_text_message_with_retry(
+                phone_number=phone_number,
+                bot_response=chunk,
+            )
         emit_funnel_event("paid_answer_delivered", phone_number=phone_number)
     except Exception:
         logger.exception(

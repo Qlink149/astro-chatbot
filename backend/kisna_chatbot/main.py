@@ -46,11 +46,58 @@ from kisna_chatbot.utils.rate_limiter import INBOUND_RATE_LIMIT, is_rate_limited
 # TODO: Upgrade to Redis distributed lock for multi-instance safety.
 _USER_LOCKS: dict[str, asyncio.Lock] = {}
 
+_BURST_BUFFERS: dict[str, list[dict]] = {}
+_BURST_COALESCE_SECONDS = 2.0
+_BURST_MAX_ITEMS = 5
+
 
 async def _get_user_lock(phone: str) -> asyncio.Lock:
     if phone not in _USER_LOCKS:
         _USER_LOCKS[phone] = asyncio.Lock()
     return _USER_LOCKS[phone]
+
+
+def _is_text_message(messages: dict) -> bool:
+    return isinstance(messages, dict) and messages.get("type") == "text"
+
+
+async def _burst_coalesce(phone: str, messages: dict) -> dict:
+    """Buffer rapid text messages and merge them into one turn.
+
+    Only coalesces plain text messages; interactive/button/flow messages
+    are never buffered.
+    """
+    if not _is_text_message(messages):
+        return messages
+
+    body = ((messages.get("text") or {}).get("body") or "").strip()
+    if not body:
+        return messages
+
+    buf = _BURST_BUFFERS.setdefault(phone, [])
+    buf.append({
+        "text": body,
+        "ts": time.time(),
+        "id": messages.get("id", ""),
+    })
+    if len(buf) > _BURST_MAX_ITEMS:
+        buf[:] = buf[-_BURST_MAX_ITEMS:]
+
+    await asyncio.sleep(_BURST_COALESCE_SECONDS)
+
+    buf = _BURST_BUFFERS.get(phone, [])
+    if not buf:
+        return messages
+
+    merged_text = " ".join(item["text"] for item in buf)
+    merged_id = buf[-1].get("id", messages.get("id", ""))
+    _BURST_BUFFERS.pop(phone, None)
+
+    merged = dict(messages)
+    merged["text"] = {"body": merged_text}
+    if merged_id:
+        merged["id"] = merged_id
+    return merged
 
 ALLOWED_ORIGINS = [
     "http://localhost:5173",
@@ -483,6 +530,11 @@ async def process_message(
             if non_text_result == "silent":
                 touch_last_message_at(phone_number, client_id)
                 return
+
+            # Burst coalesce: merge rapid consecutive text messages
+            if _is_text_message(messages):
+                messages = await _burst_coalesce(phone_number, messages)
+                data["messages"] = messages
 
             pipeline_start = time.time()
 

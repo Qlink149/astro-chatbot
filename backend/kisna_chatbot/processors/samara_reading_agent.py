@@ -40,6 +40,8 @@ from kisna_chatbot.utils.distress import (
 )
 from kisna_chatbot.utils.logger_config import logger
 from kisna_chatbot.utils.samara_beats import (
+    ACK_RE_OFFER_TEXT_EN,
+    ACK_RE_OFFER_TEXT_HI,
     ACTIVE_INTRO_BEATS,
     BEAT_1_AWAITING_CONFIRM,
     BEAT_2_AWAITING_ADVANCE,
@@ -59,6 +61,8 @@ from kisna_chatbot.utils.samara_beats import (
     beat2b_confirm_buttons,
     claim_beat_transition,
     dated_anchors_available,
+    detect_language_switch,
+    detect_restart_intent,
     inbound_message_id,
     looks_like_greeting,
     mark_beat_send,
@@ -71,6 +75,7 @@ from kisna_chatbot.utils.samara_beats import (
     parse_pay_intent,
     parse_returning_choice,
     parse_topic_choice,
+    parse_yes_no_freetext,
     paywall_buttons,
     relevant_dasha_slice,
     returning_menu_buttons,
@@ -151,8 +156,35 @@ GEOCODE_FAIL_TEXT = (
 )
 
 ERROR_TEXT = (
+    "Maaf kijiye, abhi kuch gadbad ho gayi 😔 "
+    "Thodi der baad phir se try kijiye — main yahin hoon. 🙏"
+)
+
+ERROR_TEXT_LLM_TIMEOUT = (
+    "Abhi thoda time lag raha hai mujhe sochne mein 😔 "
+    "Ek minute baad phir se poochiye — main ready hoon. 🙏"
+)
+
+ERROR_TEXT_ENGINE_FAIL = (
     "Maaf kijiye, kundli banate waqt kuch gadbad ho gayi 😔 "
     "Please form dobara bhar kar try kijiye. 🙏"
+)
+
+ERROR_TEXT_PAYMENT_LINK = (
+    "Maaf kijiye, payment link abhi nahi ban paya 😔 "
+    "Thodi der baad 'PAY' likh kar try kijiye. 🙏"
+)
+
+LANG_SWITCH_CONFIRM_HI = "Theek hai, ab se Hindi mein baat karungi 🙏"
+LANG_SWITCH_CONFIRM_EN = "Sure, I'll write in English from now on 🙏"
+
+RESTART_CONFIRM_TEXT_HI = (
+    "Theek hai, purani details clear kar di hain 🙏 "
+    "Neeche form se naye birth details bhejiye — phir se fresh start. 🌙"
+)
+RESTART_CONFIRM_TEXT_EN = (
+    "Done — I've cleared your earlier details 🙏 "
+    "Send your birth details again via the form below for a fresh start. 🌙"
 )
 
 LANG_ASK_TEXT = (
@@ -422,6 +454,37 @@ class SamaraReadingAgent(Processor):
         if parse_paywall_choice(messages) == "later":
             return self._handle_paywall_later(data, profile, phone_number)
 
+        # ── Language switch (any time) ─────────────────────────────────
+        if inbound_text:
+            lang_switch = detect_language_switch(inbound_text)
+            if lang_switch and profile.get("user_language") and lang_switch != profile.get("user_language"):
+                profile["user_language"] = lang_switch
+                confirm = LANG_SWITCH_CONFIRM_EN if lang_switch == "english" else LANG_SWITCH_CONFIRM_HI
+                data["bot_response"] = [{"type": "text", "text": confirm}]
+                return data
+
+        # ── Restart intent (preserve credits + ledger) ─────────────────
+        if inbound_text and detect_restart_intent(inbound_text):
+            lang = _lang(profile)
+            for key in (
+                "birth_details", "chart_json", "confirmed_events",
+                "rejected_windows", "beat2_windows_offered",
+                "beat2_offered_starts", "beat2_pending_window",
+                "conversation_beat", "user_language",
+                "free_deep_answer_used", "free_reading_used",
+                "open_loop_summary", "chosen_topic",
+                "beat_last_inbound_id", "conversation_summary",
+                "pending_deep_question",
+            ):
+                profile.pop(key, None)
+            confirm = RESTART_CONFIRM_TEXT_EN if lang == "english" else RESTART_CONFIRM_TEXT_HI
+            emit_funnel_event("restart", phone_number=phone_number)
+            data["bot_response"] = [
+                {"type": "text", "text": confirm},
+                {"type": "flow", "flow": "birth_details"},
+            ]
+            return data
+
         # Idempotent: duplicate Gupshup delivery of an already-handled inbound
         # must not advance or regenerate beats.
         if inbound_id and profile.get("beat_last_inbound_id") == inbound_id:
@@ -490,13 +553,10 @@ class SamaraReadingAgent(Processor):
                 return await self._send_beat2_entry(
                     data, profile, phone_number, inbound_id, confirm_signal=conf
                 )
+            # Unrecognised free-text: short ack + re-offer buttons (never silent drop)
+            ack = ACK_RE_OFFER_TEXT_EN if _lang(profile) == "english" else ACK_RE_OFFER_TEXT_HI
             data["bot_response"] = [
-                beat1_confirm_buttons(
-                    "Yeh pehchaan theek lagti hai?"
-                    if _lang(profile) != "english"
-                    else "Does this feel like you?",
-                    lang=_lang(profile),
-                )
+                beat1_confirm_buttons(ack, lang=_lang(profile))
             ]
             return data
 
@@ -537,13 +597,9 @@ class SamaraReadingAgent(Processor):
                 ]
                 mark_beat_send(profile, BEAT_AWAITING_TOPIC, inbound_id)
                 return data
+            ack = ACK_RE_OFFER_TEXT_EN if _lang(profile) == "english" else ACK_RE_OFFER_TEXT_HI
             data["bot_response"] = [
-                beat2a_confirm_buttons(
-                    "Yeh theme theek lagti hai?"
-                    if _lang(profile) != "english"
-                    else "Does this theme feel right?",
-                    lang=_lang(profile),
-                )
+                beat2a_confirm_buttons(ack, lang=_lang(profile))
             ]
             return data
 
@@ -611,13 +667,9 @@ class SamaraReadingAgent(Processor):
                 ]
                 mark_beat_send(profile, BEAT_AWAITING_TOPIC, inbound_id)
                 return data
+            ack = ACK_RE_OFFER_TEXT_EN if _lang(profile) == "english" else ACK_RE_OFFER_TEXT_HI
             data["bot_response"] = [
-                beat2b_confirm_buttons(
-                    "Us waqt kuch badla tha?"
-                    if _lang(profile) != "english"
-                    else "Did something shift then?",
-                    lang=_lang(profile),
-                )
+                beat2b_confirm_buttons(ack, lang=_lang(profile))
             ]
             return data
 
@@ -654,13 +706,9 @@ class SamaraReadingAgent(Processor):
                     data["bot_response"] = [topic_picker_buttons(lang=_lang(profile))]
                     return data
                 return self._send_topic_picker(data, profile)
+            ack = ACK_RE_OFFER_TEXT_EN if _lang(profile) == "english" else ACK_RE_OFFER_TEXT_HI
             data["bot_response"] = [
-                beat2_next_button(
-                    "Jab ready ho, aage badhein."
-                    if _lang(profile) != "english"
-                    else "When you're ready, continue.",
-                    lang=_lang(profile),
-                )
+                beat2_next_button(ack, lang=_lang(profile))
             ]
             return data
 
@@ -1214,13 +1262,7 @@ class SamaraReadingAgent(Processor):
                 extra={"phone_number": phone_number},
             )
             data["bot_response"] = [
-                {
-                    "type": "text",
-                    "text": (
-                        "Maaf kijiye, payment link abhi nahi ban paya 😔 "
-                        "Thodi der baad 'PAY' likh kar try kijiye. 🙏"
-                    ),
-                }
+                {"type": "text", "text": ERROR_TEXT_PAYMENT_LINK}
             ]
         return data
 

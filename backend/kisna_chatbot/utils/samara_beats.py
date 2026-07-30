@@ -458,6 +458,69 @@ def _extract_postback(messages: dict) -> tuple[str, str]:
     return "", ""
 
 
+_YES_WORDS = frozenset({
+    "haan", "ha", "yes", "ok", "okay", "theek hai", "theek", "sahi",
+    "bilkul", "haan bhai", "haan ji", "ji", "yeah", "yep", "yup",
+    "sure", "of course",
+})
+_NO_WORDS = frozenset({
+    "nahi", "nhi", "no", "nahin", "nope", "nahi yaar", "nahi bhai",
+    "no thanks", "nahi ji",
+})
+
+_RESTART_PHRASES = frozenset({
+    "start over", "restart", "galat details", "dobara shuru",
+    "meri details change", "reset", "naye details",
+})
+
+_LANG_SWITCH_EN = frozenset({
+    "english mein bhejo", "switch to english", "english me",
+    "english mein", "in english", "english please",
+})
+_LANG_SWITCH_HI = frozenset({
+    "hindi mein", "hindi me", "hindi mein bhejo", "switch to hindi",
+    "hinglish mein", "hinglish me", "in hindi",
+})
+
+ACK_RE_OFFER_TEXT_HI = (
+    "Main samajh gayi 🙏 Neeche diye buttons mein se choose kijiye."
+)
+ACK_RE_OFFER_TEXT_EN = (
+    "Got it 🙏 Please choose from the options below."
+)
+
+
+def _normalize_freetext(text: str) -> str:
+    return (text or "").strip().lower().rstrip("!.?")
+
+
+def parse_yes_no_freetext(text: str) -> str | None:
+    """Return 'yes' | 'no' | None from casual free-text."""
+    t = _normalize_freetext(text)
+    if not t:
+        return None
+    if t in _YES_WORDS:
+        return "yes"
+    if t in _NO_WORDS:
+        return "no"
+    return None
+
+
+def detect_restart_intent(text: str) -> bool:
+    t = _normalize_freetext(text)
+    return t in _RESTART_PHRASES
+
+
+def detect_language_switch(text: str) -> str | None:
+    """Return 'english' | 'hindi' | None."""
+    t = _normalize_freetext(text)
+    if t in _LANG_SWITCH_EN:
+        return "english"
+    if t in _LANG_SWITCH_HI:
+        return "hindi"
+    return None
+
+
 def parse_beat1_confirm(messages: dict) -> str | None:
     """Return 'yes' | 'soft' | None."""
     pid, title = _extract_postback(messages)
@@ -477,6 +540,9 @@ def parse_beat1_confirm(messages: dict) -> str | None:
         "a little",
     ):
         return "soft"
+    freetext = parse_yes_no_freetext(title)
+    if freetext == "yes":
+        return "yes"
     return None
 
 
