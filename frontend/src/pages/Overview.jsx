@@ -5,7 +5,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import { getDashboardStats, getUserGrowth } from '@/lib/api'
+import { getDashboardStats, getUserGrowth, getModelMix } from '@/lib/api'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { BRAND_COLORS, statIconClasses } from '@/components/charts/brandChartTheme'
 
@@ -290,6 +290,7 @@ export default function Overview() {
   const [stats, setStats] = useState(null)
   const [userGrowth, setUserGrowth] = useState(null)
   const [userGrowthUnavailable, setUserGrowthUnavailable] = useState(false)
+  const [modelMix, setModelMix] = useState(null)
   const [loading, setLoading] = useState(true)
   const [lastSync, setLastSync] = useState(null)
   const intervalRef = useRef(null)
@@ -299,9 +300,10 @@ export default function Overview() {
     const growthPeriod = mapGrowthPeriod(period)
 
     try {
-      const [statsData, userGrowthRes] = await Promise.all([
+      const [statsData, userGrowthRes, modelMixRes] = await Promise.all([
         getDashboardStats({ period }),
         getUserGrowth(growthPeriod).catch(() => null),
+        getModelMix(7).catch(() => null),
       ])
 
       setStats(statsData)
@@ -309,10 +311,12 @@ export default function Overview() {
 
       setUserGrowth(userGrowthRes?.data ?? null)
       setUserGrowthUnavailable(userGrowthRes == null)
+      setModelMix(modelMixRes)
     } catch {
       setStats(null)
       setUserGrowth(null)
       setUserGrowthUnavailable(true)
+      setModelMix(null)
     } finally {
       setLoading(false)
     }
@@ -378,6 +382,29 @@ export default function Overview() {
                 <div key={key} className="rounded-md border border-[rgb(var(--navy-rgb)/0.08)] px-3 py-2">
                   <p className="text-muted-foreground">{key.replace(/_/g, ' ')}</p>
                   <p className="text-lg font-semibold mt-0.5">{val}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {!loading && modelMix && (
+          <div className="col-span-full executive-card p-5">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-sm font-medium">Model mix &amp; cost (last 7 days)</p>
+              <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                <span>Total cost: <strong className="text-foreground">${modelMix.total_cost_usd?.toFixed(4)}</strong></span>
+                <span>Cost/conversation: <strong className="text-foreground">${modelMix.cost_per_conversation_usd?.toFixed(4)}</strong></span>
+                <span>Active users: <strong className="text-foreground">{modelMix.active_users_with_chat}</strong></span>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
+              {(modelMix.by_model || []).map((m) => (
+                <div key={m.model} className="rounded-md border border-[rgb(var(--navy-rgb)/0.08)] px-3 py-2">
+                  <p className="font-medium text-foreground truncate">{m.model}</p>
+                  <div className="mt-1 space-y-0.5 text-muted-foreground">
+                    <p>{m.requests} requests · {m.pct_of_cost}% of cost</p>
+                    <p>${m.estimated_cost_usd?.toFixed(4)} · {((m.prompt_tokens || 0) + (m.completion_tokens || 0)).toLocaleString()} tokens</p>
+                  </div>
                 </div>
               ))}
             </div>

@@ -345,6 +345,31 @@ def _parse_birth_text(text: str) -> dict | None:
     }
 
 
+DAILY_CAP_TEXT_HI = (
+    "Aaj ke liye Samara ki generation limit ho gayi hai 🌙 "
+    "Kal phir se poochiye — main yahin rahungi. 🙏"
+)
+DAILY_CAP_TEXT_EN = (
+    "Samara has reached today's generation limit 🌙 "
+    "Ask me again tomorrow — I'll be right here. 🙏"
+)
+
+
+def _check_daily_gen_cap(profile: dict) -> bool:
+    """Return True if daily cap is reached. Increment counter if not."""
+    from kisna_chatbot.ai.config import get_ai_settings
+    cap = get_ai_settings().get("samara_daily_gen_cap", 40)
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if profile.get("daily_gen_day") != today:
+        profile["daily_gen_day"] = today
+        profile["daily_gen_count"] = 0
+    count = int(profile.get("daily_gen_count") or 0)
+    if count >= cap:
+        return True
+    profile["daily_gen_count"] = count + 1
+    return False
+
+
 def _has_completed_free_path(profile: dict) -> bool:
     return bool(
         profile.get("free_deep_answer_used") or profile.get("free_reading_used")
@@ -838,6 +863,15 @@ class SamaraReadingAgent(Processor):
             kwargs["model_fallback"] = fallback
         return await complete_chat(**kwargs)
 
+    def _enforce_daily_cap(self, data: dict, profile: dict, phone_number: str) -> bool:
+        """Return True and set bot_response if daily cap hit. Distress always allowed."""
+        if _check_daily_gen_cap(profile):
+            emit_funnel_event("daily_cap_hit", phone_number=phone_number)
+            cap_text = DAILY_CAP_TEXT_EN if _lang(profile) == "english" else DAILY_CAP_TEXT_HI
+            data["bot_response"] = [{"type": "text", "text": cap_text}]
+            return True
+        return False
+
     async def _send_beat1(
         self, data: dict, profile: dict, phone_number: str, inbound_id: str
     ) -> dict:
@@ -848,6 +882,9 @@ class SamaraReadingAgent(Processor):
             and profile.get("conversation_beat") == BEAT_1_AWAITING_CONFIRM
         ):
             data["bot_response"] = [{"type": "skip"}]
+            return data
+
+        if self._enforce_daily_cap(data, profile, phone_number):
             return data
 
         chart = profile.get("chart_json")
@@ -1141,6 +1178,9 @@ class SamaraReadingAgent(Processor):
     async def _send_beat4(
         self, data: dict, profile: dict, phone_number: str, topic: str
     ) -> dict:
+        if self._enforce_daily_cap(data, profile, phone_number):
+            return data
+
         chart = profile.get("chart_json")
         now_ctx = _now_context(chart)
         lang = _lang(profile)
@@ -1452,6 +1492,10 @@ class SamaraReadingAgent(Processor):
                 else PAYWALL_TEXT_HI
             )
             data["bot_response"] = [paywall_buttons(lang=_lang(profile), body=body)]
+            return data
+
+        # Daily generation cap (distress already handled above)
+        if self._enforce_daily_cap(data, profile, phone_number):
             return data
 
         # Timing intent: redirect to topic picker instead of spending credits

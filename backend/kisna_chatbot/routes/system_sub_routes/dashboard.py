@@ -1,3 +1,5 @@
+import time
+
 from fastapi import APIRouter, HTTPException, Query
 from typing import Literal
 
@@ -86,3 +88,64 @@ def users_growth(
     except Exception:
         logger.exception("Failed to fetch user growth", extra={"period": period})
         raise HTTPException(status_code=500, detail="Failed to fetch user growth")
+
+
+@router.get("/model-mix")
+def model_mix_cost(
+    days: int = Query(7, ge=1, le=90),
+    client_id: str = Query("samara"),
+):
+    """Model-mix breakdown and rough cost-per-conversation from ai_usage_logs."""
+    try:
+        from kisna_chatbot.database.collections import ai_usage_logs, users
+
+        since = int(time.time()) - days * 86400
+        pipeline = [
+            {"$match": {"client_id": client_id, "created_at": {"$gte": since}}},
+            {
+                "$group": {
+                    "_id": "$model",
+                    "requests": {"$sum": 1},
+                    "prompt_tokens": {"$sum": "$prompt_tokens"},
+                    "completion_tokens": {"$sum": "$completion_tokens"},
+                    "estimated_cost_usd": {"$sum": "$estimated_cost_usd"},
+                }
+            },
+            {"$sort": {"estimated_cost_usd": -1}},
+        ]
+        rows = list(ai_usage_logs.aggregate(pipeline))
+        total_cost = sum(r.get("estimated_cost_usd") or 0 for r in rows)
+        total_requests = sum(r.get("requests") or 0 for r in rows)
+
+        active_users = users.count_documents({
+            "client_id": client_id,
+            "chat_history": {"$exists": True, "$ne": []},
+        })
+        cost_per_conversation = (
+            round(total_cost / max(1, active_users), 4) if total_cost else 0
+        )
+
+        return {
+            "client_id": client_id,
+            "days": days,
+            "total_cost_usd": round(total_cost, 6),
+            "total_requests": total_requests,
+            "cost_per_conversation_usd": cost_per_conversation,
+            "active_users_with_chat": active_users,
+            "by_model": [
+                {
+                    "model": r["_id"] or "unknown",
+                    "requests": r["requests"],
+                    "prompt_tokens": r["prompt_tokens"],
+                    "completion_tokens": r["completion_tokens"],
+                    "estimated_cost_usd": round(r.get("estimated_cost_usd") or 0, 6),
+                    "pct_of_cost": round(
+                        ((r.get("estimated_cost_usd") or 0) / max(total_cost, 0.0001)) * 100, 1
+                    ),
+                }
+                for r in rows
+            ],
+        }
+    except Exception:
+        logger.exception("Failed to fetch model mix")
+        raise HTTPException(status_code=500, detail="Failed to fetch model mix")

@@ -74,6 +74,12 @@ export const getUserGrowth = (period = 'month') => {
   return api(`/system/dashboard/users/growth?${q.toString()}`)
 }
 
+export const getModelMix = (days = 7) => {
+  const q = withClientId()
+  q.set('days', String(days))
+  return api(`/system/dashboard/model-mix?${q.toString()}`)
+}
+
 // ---------------- USERS ----------------
 export const listUsers = (page = 1, limit = 20, agentRequested = false) => {
   const q = withClientId()
