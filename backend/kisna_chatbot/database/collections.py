@@ -9,6 +9,7 @@ processed_inbound_messages = db["processed_inbound_messages"]
 chat_messages = db["chat_messages"]
 message_traces = db["message_traces"]
 payments = db["payments"]
+samara_funnel = db["samara_funnel"]
 
 COLLECTIONS = (
     users,
@@ -18,4 +19,5 @@ COLLECTIONS = (
     chat_messages,
     message_traces,
     payments,
+    samara_funnel,
 )

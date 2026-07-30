@@ -42,6 +42,15 @@ def dashboard_stats(client_id: str = Query("samara", description="Tenant client 
                 )
             )
             stats["total_followup_questions"] = agg[0]["total"] if agg else 0
+            from kisna_chatbot.utils.funnel_events import get_funnel_counts
+
+            stats["funnel"] = get_funnel_counts(client_id)
+            # Prefer free-deep count when present; fall back to free_reading_used
+            stats["total_free_deep_answers"] = stats["funnel"].get(
+                "free_deep_answer_sent", 0
+            )
+            stats["total_beat1_sent"] = stats["funnel"].get("beat1_sent", 0)
+            stats["total_topics_chosen"] = stats["funnel"].get("topic_chosen", 0)
         return stats
     except Exception:
         logger.exception("Failed to fetch dashboard stats")

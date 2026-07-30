@@ -26,7 +26,8 @@ sign / nakshatra / planet claim absent from a fixed `chart_json`.
 |---|---|
 | `MONGO_URI` / `MONGO_DB_NAME` | MongoDB (samara data isolated by `client_id`) |
 | `ANTHROPIC_API_KEY` | Claude for Samara readings (preferred when set) |
-| `ANTHROPIC_CHAT_MODEL` | Default Haiku model id (e.g. `claude-haiku-4-5`) |
+| `ANTHROPIC_CHAT_MODEL` | Haiku model id for functional messages (default `claude-haiku-4-5`) |
+| `ANTHROPIC_CHAT_MODEL_SONNET` | Sonnet model id for Beats 1 / 2 / 4 (default `claude-sonnet-4-5`) |
 | `OPENAI_API_KEY` / `GROQ_API_KEY` | Fallback providers / other agents |
 | `AI_PROVIDER`, `AI_PROVIDER_GENERAL`, `AI_PROVIDER_CLASSIFIER` | Non-Samara / fallback routing |
 | `GUPSHUP_APP_NAME`, `GUPSHUP_APP_ID`, `GUPSHUP_TOKEN`, `GUPSHUP_API_KEY` | Gupshup WhatsApp BSP |
@@ -87,17 +88,16 @@ Login with `SUPER_ADMIN_USERNAME` / `SUPER_ADMIN_PASSWORD`.
 
 ## 5. Current conversation flow (paywall OFF)
 
-1. First inbound → `UserRegistration` creates a samara profile.
-2. Bot greets and sends the `birth_details` Flow.
-3. Flow completion → geocode → `compute_chart()` → `chart_json` on profile → language
-   buttons (English / Hindi).
-4. Language chosen → one free LLM reading (Claude **Haiku** by default when
-   `ANTHROPIC_API_KEY` is set); `free_reading_used=True`.
-5. Follow-ups: **ungated** while paywall is OFF (testing). Credits are granted by
-   Razorpay but **not** consumed yet. Exact text `PAY` still creates a Razorpay
-   payment-link CTA.
-6. Beat-based conversation + monetization gate are planned next (see product plan);
-   do not treat README §5 as the final UX once those land.
+1. First inbound → greeting + `birth_details` Flow.
+2. Flow completion → geocode → `compute_chart()` → language buttons.
+3. Language chosen → **Beat 1** identity (Sonnet) + confirm buttons.
+4. Confirm → **Beat 2** past proof from `is_relevant` dashas only + continue button.
+5. Continue → **Beat 3** topic picker (5 buttons).
+6. Topic → **Beat 4** one free deep answer + open loop; `free_deep_answer_used=true`.
+7. Returning users with a chart skip birth/Beat 1; continuity menu
+   (`Wahi baat aage` / `Naya sawaal` / `Aaj ka muhurat`).
+8. Follow-ups remain **ungated** until Phase 2. Exact `PAY` still creates a Razorpay CTA.
+9. Funnel event counts appear on the admin Overview.
 
 ---
 

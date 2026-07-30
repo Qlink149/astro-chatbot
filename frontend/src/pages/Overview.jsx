@@ -358,12 +358,28 @@ export default function Overview() {
         <StatCard label="Total Users" description="Seekers on WhatsApp" icon={Users} href="/users" color={statIconClasses('primary')} count={stats?.total_users} loading={loading} />
         <StatCard label="Messages" description={stats ? `${stats.avg_messages_per_user?.toFixed(1) ?? '—'} avg per user` : 'Avg per user'} icon={MessageSquare} color={statIconClasses('deep')} count={stats?.total_messages} loading={loading} />
         <StatCard label="Readings Delivered" description="Free kundli readings sent" icon={Sparkles} color={statIconClasses('soft')} count={stats?.total_readings} loading={loading} />
-        <StatCard label="Follow-up Questions" description="Credit-gated questions asked" icon={HelpCircle} color={statIconClasses('warning')} count={stats?.total_followup_questions} loading={loading} />
+        <StatCard label="Beat 1 sent" description="Identity punches delivered" icon={Sparkles} color={statIconClasses('soft')} count={stats?.total_beat1_sent ?? stats?.funnel?.beat1_sent} loading={loading} />
+        <StatCard label="Topics chosen" description="Topic picker taps" icon={HelpCircle} color={statIconClasses('warning')} count={stats?.total_topics_chosen ?? stats?.funnel?.topic_chosen} loading={loading} />
+        <StatCard label="Free deep answers" description="Beat 4 answers delivered" icon={Sparkles} color={statIconClasses('success')} count={stats?.total_free_deep_answers ?? stats?.funnel?.free_deep_answer_sent} loading={loading} />
+        <StatCard label="Follow-up Questions" description="Questions after free path" icon={HelpCircle} color={statIconClasses('warning')} count={stats?.total_followup_questions} loading={loading} />
         <StatCard label="AI Response Time" description="Average across all messages" icon={Zap} color={statIconClasses('success')} count={loading ? null : formatResponseTime(stats?.avg_ai_response_time_ms)} loading={loading} />
         <RatingsCard ratings={stats?.ratings} loading={loading} />
         <div className="col-span-full">
           <GrowthCard title="User Growth" icon={Users} iconBg={statIconClasses('primary')} barColor={BRAND_COLORS.primary} data={userGrowth} loading={loading} unavailable={userGrowthUnavailable} />
         </div>
+        {!loading && stats?.funnel && (
+          <div className="col-span-full executive-card p-5">
+            <p className="text-sm font-medium mb-3">Conversation funnel</p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 text-xs">
+              {Object.entries(stats.funnel).map(([key, val]) => (
+                <div key={key} className="rounded-md border border-[rgb(var(--navy-rgb)/0.08)] px-3 py-2">
+                  <p className="text-muted-foreground">{key.replace(/_/g, ' ')}</p>
+                  <p className="text-lg font-semibold mt-0.5">{val}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

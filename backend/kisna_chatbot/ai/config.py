@@ -10,6 +10,7 @@ DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
 DEFAULT_GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5"
+DEFAULT_ANTHROPIC_SONNET_MODEL = "claude-sonnet-4-5"
 
 MAX_OUTPUT_TOKENS_CLASSIFIER = 512
 MAX_OUTPUT_TOKENS_GENERAL = 1024
@@ -61,6 +62,11 @@ def get_ai_settings() -> dict:
         "anthropic_api_key": _env("ANTHROPIC_API_KEY"),
         "anthropic_chat_model": _env(
             "ANTHROPIC_CHAT_MODEL", DEFAULT_ANTHROPIC_MODEL
+        ),
+        # Beats 1 / 2 / 4 use Sonnet when set; Haiku remains the functional default
+        # and the fallback on Sonnet errors.
+        "anthropic_chat_model_sonnet": _env(
+            "ANTHROPIC_CHAT_MODEL_SONNET", DEFAULT_ANTHROPIC_SONNET_MODEL
         ),
         "max_tokens_classifier": int(
             _env("AI_MAX_TOKENS_CLASSIFIER", str(MAX_OUTPUT_TOKENS_CLASSIFIER))

@@ -47,25 +47,33 @@ def _samara_uses_anthropic(agent: AgentName, client_id: str | None) -> bool:
     return bool(get_ai_settings().get("anthropic_api_key"))
 
 
-def get_chat_provider(agent: AgentName, client_id: str | None = None):
+def get_chat_provider(
+    agent: AgentName,
+    client_id: str | None = None,
+    *,
+    model: str | None = None,
+):
     """Return chat provider for agent, with optional fallback wrapper.
 
     For client_id == "samara" and AgentName.GENERAL, Anthropic Claude is the
     primary provider (via ANTHROPIC_API_KEY env). The existing per-agent
     provider (OpenAI/Groq) is used as the transparent fallback on transient
     errors, and as the sole provider when the Anthropic key is not set.
+
+    Optional `model` overrides the Anthropic model id (e.g. Sonnet for beats).
     """
     settings = get_ai_settings()
 
     if _samara_uses_anthropic(agent, client_id):
-        anthropic_provider = _create_provider(ProviderName.ANTHROPIC)
+        primary_model = model or settings["anthropic_chat_model"]
+        anthropic_provider = _create_provider(ProviderName.ANTHROPIC, primary_model)
         secondary_name = resolve_provider(agent)
         secondary = _create_provider(secondary_name, resolve_model(secondary_name))
         return FallbackChatProvider(anthropic_provider, secondary)
 
     primary_name = resolve_provider(agent)
-    model = resolve_model(primary_name)
-    primary = _create_provider(primary_name, model)
+    resolved = model or resolve_model(primary_name)
+    primary = _create_provider(primary_name, resolved)
 
     if not settings["fallback_enabled"]:
         return primary
@@ -88,30 +96,58 @@ async def complete_chat(
     max_output_tokens: int | None = None,
     phone_number: str | None = None,
     client_id: str | None = None,
+    model: str | None = None,
+    model_fallback: str | None = None,
 ) -> str:
     """
     Run a chat completion for the given agent using configured provider(s).
 
     Returns assistant message text.
+    Optional `model` / `model_fallback` select Anthropic Sonnet vs Haiku for Samara.
+    On any Sonnet failure, retries once with `model_fallback` (Haiku).
     """
-    provider = get_chat_provider(agent, client_id=client_id)
-    request = CompletionRequest(
-        agent=agent,
-        agent_display_name=agent_display_name or agent.value,
-        instruction=instruction,
-        messages=messages,
-        tools=tools,
-        max_output_tokens=max_output_tokens or resolve_max_tokens(agent),
-        phone_number=phone_number,
-        client_id=client_id,
-    )
+    async def _run(chosen_model: str | None) -> CompletionResult:
+        provider = get_chat_provider(agent, client_id=client_id, model=chosen_model)
+        request = CompletionRequest(
+            agent=agent,
+            agent_display_name=agent_display_name or agent.value,
+            instruction=instruction,
+            messages=messages,
+            tools=tools,
+            max_output_tokens=max_output_tokens or resolve_max_tokens(agent),
+            phone_number=phone_number,
+            client_id=client_id,
+        )
+        return await provider.complete(request)
 
     success = True
     error_msg: str | None = None
     result: CompletionResult | None = None
+    used_fallback_model = False
 
     try:
-        result = await provider.complete(request)
+        try:
+            result = await _run(model)
+        except Exception as primary_exc:
+            if (
+                model_fallback
+                and model
+                and model_fallback != model
+                and client_id == "samara"
+            ):
+                logger.warning(
+                    "Samara primary model failed; retrying with fallback model",
+                    extra={
+                        "model": model,
+                        "model_fallback": model_fallback,
+                        "error": str(primary_exc),
+                    },
+                )
+                result = await _run(model_fallback)
+                used_fallback_model = True
+                result.fallback_used = True
+            else:
+                raise
         return result.text
     except Exception as e:
         success = False
@@ -135,6 +171,6 @@ async def complete_chat(
                     success=success,
                     phone_number=phone_number,
                     error=error_msg,
-                    fallback_used=result.fallback_used,
+                    fallback_used=result.fallback_used or used_fallback_model,
                 )
             )
