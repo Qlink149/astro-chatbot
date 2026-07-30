@@ -1424,6 +1424,23 @@ class SamaraReadingAgent(Processor):
             data["bot_response"] = [paywall_buttons(lang=_lang(profile), body=body)]
             return data
 
+        # Timing intent: redirect to topic picker instead of spending credits
+        if _looks_like_timing_intent(question):
+            if not profile.get("free_deep_answer_used"):
+                redirect = TIMING_REDIRECT_EN if _lang(profile) == "english" else TIMING_REDIRECT_HI
+                mark_beat_send(profile, BEAT_AWAITING_TOPIC)
+                data["bot_response"] = [
+                    {"type": "text", "text": redirect},
+                    topic_picker_buttons(lang=_lang(profile)),
+                ]
+                return data
+            if get_credit_balance(profile) <= 0:
+                profile["pending_deep_question"] = question
+                emit_funnel_event("gate_shown", phone_number=phone_number)
+                body = PAYWALL_TEXT_EN if _lang(profile) == "english" else PAYWALL_TEXT_HI
+                data["bot_response"] = [paywall_buttons(lang=_lang(profile), body=body)]
+                return data
+
         result = await deliver_paid_deep_answer(
             profile=profile,
             phone_number=phone_number,
@@ -1434,7 +1451,11 @@ class SamaraReadingAgent(Processor):
             data["bot_response"] = [{"type": "text", "text": ERROR_TEXT}]
             return data
         text, _ = result
-        data["bot_response"] = text_responses(text)
+        responses = text_responses(text)
+        upsell = _post_debit_upsell(profile, phone_number)
+        if upsell:
+            responses.extend(upsell)
+        data["bot_response"] = responses
         return data
 
     def _handle_paywall_later(
@@ -1454,6 +1475,46 @@ class SamaraReadingAgent(Processor):
         )
         data["bot_response"] = [{"type": "text", "text": text}]
         return data
+
+
+TOP_UP_TEXT_HI = (
+    "Aapke credits khatam ho gaye hain 🌙 "
+    "Aage ke sawaal ke liye naye credits le sakte hain — "
+    "neeche 'Pay Now' se unlock kijiye, ya baad mein poochiye."
+)
+TOP_UP_TEXT_EN = (
+    "You've used your last credit 🌙 "
+    "You can get more credits to keep asking — "
+    "tap Pay Now below, or come back later."
+)
+SECOND_PACK_TEXT_HI = (
+    "Aapke paas abhi 2 credits bache hain 🌙 "
+    "Agar aur sawaal poochne hain, agle pack ke liye 'Pay Now' dabaiye — "
+    "bilkul koi rush nahi."
+)
+SECOND_PACK_TEXT_EN = (
+    "You have 2 credits remaining 🌙 "
+    "If you'd like to keep going, tap Pay Now for the next pack — "
+    "no rush at all."
+)
+TIMING_REDIRECT_HI = (
+    "Yeh sawaal time-related lagta hai ✨ "
+    "Neeche se koi ek topic choose kijiye — phir main us area mein dekhungi."
+)
+TIMING_REDIRECT_EN = (
+    "This seems like a timing question ✨ "
+    "Pick a topic below — I'll look into that area for you."
+)
+
+_TIMING_KEYWORDS = frozenset({
+    "kab", "when", "which month", "kis month", "timing",
+    "kab hoga", "kab milega", "kab tak", "when will",
+})
+
+
+def _looks_like_timing_intent(text: str) -> bool:
+    t = (text or "").strip().lower()
+    return any(k in t for k in _TIMING_KEYWORDS)
 
 
 async def deliver_paid_deep_answer(
@@ -1516,7 +1577,6 @@ async def deliver_paid_deep_answer(
             profile["credits"] = updated.get("credits")
             profile["credit_ledger"] = updated.get("credit_ledger")
         else:
-            # In-memory debit fallback for tests without mongo write
             entries = list(profile.get("credit_ledger") or [])
             entries.append(
                 {
@@ -1535,3 +1595,19 @@ async def deliver_paid_deep_answer(
     profile["conversation_beat"] = BEAT_POST_FREE_DEEP
     profile["open_loop_summary"] = (text or "")[-400:]
     return text, profile
+
+
+def _post_debit_upsell(profile: dict, phone_number: str) -> list[dict] | None:
+    """After successful paid answer: top-up or second-pack offer if appropriate."""
+    balance = get_credit_balance(profile)
+    lang = _lang(profile)
+    if balance == 0:
+        emit_funnel_event("top_up_offered", phone_number=phone_number)
+        body = TOP_UP_TEXT_EN if lang == "english" else TOP_UP_TEXT_HI
+        return [paywall_buttons(lang=lang, body=body)]
+    if balance == 2 and not profile.get("second_pack_offered_session"):
+        profile["second_pack_offered_session"] = True
+        emit_funnel_event("second_pack_offered", phone_number=phone_number)
+        body = SECOND_PACK_TEXT_EN if lang == "english" else SECOND_PACK_TEXT_HI
+        return [paywall_buttons(lang=lang, body=body)]
+    return None
