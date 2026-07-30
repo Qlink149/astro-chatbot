@@ -40,6 +40,10 @@ def test_with_time():
     assert chart["houses"]["system"] == "whole_sign"
     assert "1" in chart["houses"]["bhavas"]
     assert "planet_houses" in chart["houses"]
+    assert chart["meta"].get("dated_anchors_available") is True
+    assert isinstance(chart.get("antardasha_timeline"), list)
+    assert len(chart["antardasha_timeline"]) > 0
+    assert len(chart.get("turning_points") or []) <= 5
     print("\n[PASS] Lagna=Virgo, Rashi=Cancer, 9 dasha periods — matches documented chart.")
 
 
@@ -55,6 +59,9 @@ def test_without_time():
     assert chart["meta"]["chart_type"] == "surya_kundli"
     assert chart["lagna"] is None
     assert "houses" not in chart, "houses must be absent when birth time unknown"
+    assert chart["meta"]["dated_anchors_available"] is False
+    assert chart.get("antardasha_timeline") == []
+    assert chart.get("turning_points") == []
     assert chart["meta"]["note_if_no_time"] is not None
     assert chart["surya_rashi"]["sign_en"] is not None
     print("\n[PASS] No time -> Lagna omitted, houses absent, surya_kundli, honest note present.")

@@ -32,6 +32,11 @@ from jhora.panchanga import drik
 from jhora.horoscope.chart import charts
 from jhora.horoscope.dhasa.graha import vimsottari
 
+from kundli_engine.antardasha_labels import (
+    curate_turning_points as _curate_turning_points,
+    window_label_from_ymd as _window_label_from_ymd,
+)
+
 # pysweph (cp312-compatible fork) can return more than the classic
 # (xx, retflag) 2-tuple from calc_ut/calc. PyJHora 4.8.7 still does:
 #   longi, _ = swe.calc_ut(...)
@@ -154,6 +159,86 @@ def _jd_to_year(jd: float) -> str:
     return f"{int(y):04d}-{int(m):02d}-{int(d):02d}"
 
 
+def _build_antardasha_timeline(
+    jd: float,
+    place,
+    birth_year: int,
+    current_age: int,
+) -> list[dict]:
+    """Flat chronological antardasha (bhukti) rows from PyJHora.
+
+    Returns [] on any failure — never raises into the reading path.
+    """
+    from jhora import const as jhora_const
+
+    try:
+        _vim_bal, rows = vimsottari.get_vimsottari_dhasa_bhukthi(
+            jd,
+            place,
+            dhasa_level_index=jhora_const.MAHA_DHASA_DEPTH.ANTARA,
+        )
+    except Exception:
+        return []
+
+    if not rows:
+        return []
+
+    timeline: list[dict] = []
+    for i, row in enumerate(rows):
+        try:
+            lords, start_greg, _dur = row[0], row[1], row[2]
+            if not lords or len(lords) < 2:
+                continue
+            maha_idx, antar_idx = int(lords[0]), int(lords[1])
+            maha_en, maha_hi = PLANETS.get(maha_idx, (f"P{maha_idx}", ""))
+            antar_en, antar_hi = PLANETS.get(antar_idx, (f"P{antar_idx}", ""))
+
+            sy, sm, sd = int(start_greg[0]), int(start_greg[1]), int(start_greg[2])
+            start_str = f"{sy:04d}-{sm:02d}-{sd:02d}"
+
+            if i + 1 < len(rows):
+                next_greg = rows[i + 1][1]
+                ey, em, ed = int(next_greg[0]), int(next_greg[1]), int(next_greg[2])
+                end_str = f"{ey:04d}-{em:02d}-{ed:02d}"
+                end_year = ey
+            else:
+                # Last bhukti: approximate end from duration years if present
+                dur = float(_dur or 0)
+                end_jd = utils.julian_day_number(
+                    drik.Date(sy, sm, sd), (0, 0, 0)
+                ) + dur * 365.2425
+                end_str = _jd_to_year(end_jd)
+                end_year = int(end_str[:4])
+
+            age_start = sy - birth_year
+            age_end = end_year - birth_year
+            starts_before_birth = sy < birth_year
+            # Lived adult past only: ended by now, and reached adulthood.
+            is_relevant = (
+                age_end is not None
+                and age_end <= current_age
+                and age_end >= 15
+            )
+            label_en, label_hi = _window_label_from_ymd(sy, sm)
+            timeline.append({
+                "maha_planet_en": maha_en,
+                "maha_planet_hi": maha_hi,
+                "antar_planet_en": antar_en,
+                "antar_planet_hi": antar_hi,
+                "start": start_str,
+                "end": end_str,
+                "age_start": age_start,
+                "age_end": age_end,
+                "starts_before_birth": starts_before_birth,
+                "is_relevant": is_relevant,
+                "window_label_en": label_en,
+                "window_label_hi": label_hi,
+            })
+        except Exception:
+            continue
+    return timeline
+
+
 def compute_chart(birth: BirthDetails) -> dict:
     """
     Deterministic chart computation.
@@ -272,6 +357,19 @@ def compute_chart(birth: BirthDetails) -> dict:
         dasha_timeline = []
         _dasha_error = str(e)
 
+    # Antardasha / turning points — ONLY when birth time is known.
+    # Noon-placeholder JD is too unreliable for dated anchors.
+    if birth.has_time:
+        antardasha_timeline = _build_antardasha_timeline(
+            jd, place, birth.year, current_age
+        )
+        turning_points = _curate_turning_points(antardasha_timeline)
+        dated_anchors_available = True
+    else:
+        antardasha_timeline = []
+        turning_points = []
+        dated_anchors_available = False
+
     chart = {
         "meta": {
             "has_birth_time": birth.has_time,
@@ -291,6 +389,7 @@ def compute_chart(birth: BirthDetails) -> dict:
             "birth_time": (
                 f"{birth.hour:02d}:{birth.minute:02d}" if birth.has_time else None
             ),
+            "dated_anchors_available": dated_anchors_available,
         },
         "lagna": lagna_out if birth.has_time else None,
         "rashi": rashi,               # Moon sign
@@ -298,6 +397,8 @@ def compute_chart(birth: BirthDetails) -> dict:
         "nakshatra": nakshatra,
         "planets": planets_out,
         "dasha_timeline": dasha_timeline,
+        "antardasha_timeline": antardasha_timeline,
+        "turning_points": turning_points,
     }
     # Houses / bhava — ONLY when birth time is known (whole-sign from Lagna).
     # When time is unknown, omit the key entirely — never estimate.
