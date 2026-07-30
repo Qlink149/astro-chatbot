@@ -29,6 +29,11 @@ from kisna_chatbot.payments.credit_ledger import debit_credit, get_credit_balanc
 from kisna_chatbot.utils.format_chathistory import format_recent_history_str
 from kisna_chatbot.utils.funnel_events import emit_funnel_event
 from kisna_chatbot.utils.geocode_in import geocode_place, timezone_offset_for
+from kisna_chatbot.utils.distress import (
+    assess_distress,
+    crisis_response_text,
+    extract_inbound_text,
+)
 from kisna_chatbot.utils.logger_config import logger
 from kisna_chatbot.utils.samara_beats import (
     ACTIVE_INTRO_BEATS,
@@ -369,6 +374,36 @@ class SamaraReadingAgent(Processor):
         profile.setdefault("free_deep_answer_used", False)
         messages = data.get("messages") or {}
         inbound_id = inbound_message_id(messages)
+
+        # Distress path — BEFORE paywall, beats, or any astrology LLM.
+        inbound_text = extract_inbound_text(messages)
+        if inbound_text:
+
+            async def _distress_classify(instruction: str, user_text: str) -> str:
+                return await self._llm(
+                    instruction=instruction,
+                    user_content=user_text,
+                    phone_number=phone_number,
+                    agent_display_name="SamaraDistress",
+                    max_output_tokens=80,
+                    use_sonnet=False,
+                )
+
+            flagged = await assess_distress(
+                inbound_text, classify_fn=_distress_classify
+            )
+            if flagged.distress:
+                emit_funnel_event("distress_flagged", phone_number=phone_number)
+                data["bot_response"] = [
+                    {
+                        "type": "text",
+                        "text": crisis_response_text(
+                            lang=_lang(profile),
+                            self_harm=flagged.self_harm,
+                        ),
+                    }
+                ]
+                return data
 
         # Exact PAY or natural-language pay intent → Razorpay CTA
         if messages.get("type") == "text":

@@ -34,6 +34,7 @@ FUNNEL_EVENTS = (
     "pay_link_created",
     "payment_succeeded",
     "paid_answer_delivered",
+    "distress_flagged",
 )
 
 
