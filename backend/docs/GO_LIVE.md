@@ -28,7 +28,7 @@ SUPER_ADMIN_PASSWORD=
 JWT_SECRET_KEY=
 SYSTEM_API_KEY=
 
-WEBHOOK_URL=https://YOUR-API.vercel.app/gupshup/message/samara
+WEBHOOK_URL=https://YOUR-API.vercel.app/api/gupshup/message/samara
 GUPSHUP_WEBHOOK_MODES=MESSAGE,FLOWS_MESSAGE,SENT,DELIVERED,READ,DELETED,FAILED,OTHERS,ENQUEUED
 ```
 
@@ -36,7 +36,7 @@ GUPSHUP_WEBHOOK_MODES=MESSAGE,FLOWS_MESSAGE,SENT,DELIVERED,READ,DELETED,FAILED,O
 
 Vercel project Root Directory = `backend`.
 
-Health: `GET https://YOUR-API.vercel.app/ping` → `{"status":"ok"}`
+Health: `GET https://YOUR-API.vercel.app/api/ping` → `{"status":"ok"}`
 
 ## 3. Register Gupshup webhook
 

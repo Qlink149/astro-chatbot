@@ -15,7 +15,7 @@ Python `3.12` via `.python-version`. Runtime deps are in slim `requirements.txt`
 
 After env vars are set, redeploy and check:
 
-`GET https://YOUR-API.vercel.app/ping` → `{"status":"ok"}`
+`GET https://YOUR-API.vercel.app/api/ping` → `{"status":"ok"}`
 
 ## Deploy dashboard
 
@@ -28,7 +28,7 @@ VITE_API_URL=https://YOUR-API.vercel.app
 ## Webhook
 
 ```text
-https://YOUR-API.vercel.app/gupshup/message/samara
+https://YOUR-API.vercel.app/api/gupshup/message/samara
 ```
 
-No `/api` prefix on this Vercel entrypoint (`api/index.py`).
+`/api` prefix on this Vercel entrypoint (`api/index.py` strips it before FastAPI routing).
