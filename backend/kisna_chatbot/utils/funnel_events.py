@@ -41,6 +41,9 @@ FUNNEL_EVENTS = (
     "top_up_offered",
     "daily_cap_hit",
     "data_deleted",
+    "trust_recovery_entered",
+    "trust_recovery_succeeded",
+    "trust_recovery_failed",
 )
 
 
