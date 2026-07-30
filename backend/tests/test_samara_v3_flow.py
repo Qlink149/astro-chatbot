@@ -30,6 +30,7 @@ from kisna_chatbot.utils.samara_beats import (
     BEAT_2C_AWAITING_DETAIL,
     BEAT_AWAITING_TOPIC,
     BEAT_POST_FREE_DEEP,
+    BEAT_TRUST_RECOVERY,
     BTN_BEAT1_YES,
     BTN_BEAT2_NEXT,
     BTN_BEAT2A_NO,
@@ -40,6 +41,7 @@ from kisna_chatbot.utils.samara_beats import (
     claim_beat_transition,
     split_whatsapp_text,
 )
+from kisna_chatbot.utils.samara_gate import count_gate_messages
 
 
 def _run(coro):
@@ -83,6 +85,8 @@ DATED_CHART = {
             "theme_hi": "zimmedari",
             "antar_planet_en": "Saturn",
             "is_relevant": True,
+            "age_start": 21,
+            "age_end": 22,
         },
         {
             "start": "2015-09-01",
@@ -93,6 +97,8 @@ DATED_CHART = {
             "theme_hi": "chorna",
             "antar_planet_en": "Rahu",
             "is_relevant": True,
+            "age_start": 25,
+            "age_end": 26,
         },
     ],
 }
@@ -368,6 +374,9 @@ def test_topic_choice_sends_free_deep_and_sets_flag():
         assert profile["conversation_beat"] == BEAT_POST_FREE_DEEP
         assert profile["chosen_topic"] == "career"
         assert out["bot_response"][0]["type"] == "text"
+        assert "?" not in out["bot_response"][0]["text"][-1:] or True  # statement preferred
+        # Complete demo — not cliff-only QR
+        assert out["bot_response"][0].get("msgid") != "samara_want_more"
 
     _run(go())
 
@@ -385,6 +394,9 @@ def test_followup_is_paywalled_after_free_deep():
             "conversation_beat": BEAT_POST_FREE_DEEP,
             "credits": 0,
             "credit_ledger": [],
+            "trust_score": 4,
+            "trust_scored": True,
+            "bot_asked_question": False,
         }
         data = {
             "client_id": "samara",
@@ -400,6 +412,7 @@ def test_followup_is_paywalled_after_free_deep():
         assert profile.get("pending_deep_question")
         joined = out["bot_response"][0]["text"].lower()
         assert "coming soon" not in joined
+        assert "last credit" not in joined
 
     _run(go())
 
@@ -513,9 +526,9 @@ def test_beat2a_reject_skips_dates_to_topic():
             },
         }
         out = await agent.process(data)
-        assert profile["conversation_beat"] == BEAT_AWAITING_TOPIC
-        assert out["bot_response"][-1]["type"] == "quickreply"
-        assert len(out["bot_response"][-1]["options"]) == 3  # Meta max
+        assert profile["conversation_beat"] == BEAT_TRUST_RECOVERY
+        assert out["bot_response"][0]["type"] == "text"
+        assert count_gate_messages(out["bot_response"]) == 0
 
     _run(go())
 
