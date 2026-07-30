@@ -71,17 +71,18 @@ def grant_credits_for_payment(
     phone_number: str,
     client_id: str,
     credits: int = 10,
+    payment_id: str | None = None,
 ) -> dict | None:
-    """Increment user credits after a successful payment_link.paid webhook."""
-    try:
-        return users.find_one_and_update(
-            {"phone_number": phone_number, "client_id": client_id},
-            {"$inc": {"credits": int(credits)}},
-            return_document=ReturnDocument.AFTER,
-        )
-    except Exception:
-        logger.exception(
-            "grant_credits_for_payment failed",
-            extra={"phone_number": phone_number, "client_id": client_id},
-        )
-        return None
+    """Grant credits via append-only ledger after payment_link.paid.
+
+    Idempotent on payment_id — retried webhooks must not double-grant.
+    """
+    from kisna_chatbot.payments.credit_ledger import grant_credits
+
+    return grant_credits(
+        phone_number=phone_number,
+        client_id=client_id,
+        amount=int(credits),
+        source="razorpay_payment_link",
+        payment_id=payment_id,
+    )

@@ -41,6 +41,8 @@ BTN_TOPIC_DECISION = "samara_topic_decision"
 BTN_RET_CONTINUE = "samara_ret_continue"
 BTN_RET_NEW = "samara_ret_new"
 BTN_RET_MUHURAT = "samara_ret_muhurat"
+BTN_PAYWALL_PAY = "samara_paywall_pay"
+BTN_PAYWALL_LATER = "samara_paywall_later"
 
 TOPIC_BY_POSTBACK = {
     BTN_TOPIC_CAREER: "career",
@@ -246,6 +248,62 @@ def returning_menu_buttons(*, lang: str, name: str) -> dict:
         "samara_returning",
         [{"type": "text", "title": t[:20], "postbackText": p} for t, p in opts],
     )
+
+
+def paywall_buttons(*, lang: str, body: str) -> dict:
+    pay_t = "Pay Now" if lang == "english" else "Pay Now"
+    later_t = "Baad mein"
+    return _quickreply(
+        body,
+        "samara_paywall",
+        [
+            {"type": "text", "title": pay_t, "postbackText": BTN_PAYWALL_PAY},
+            {"type": "text", "title": later_t, "postbackText": BTN_PAYWALL_LATER},
+        ],
+        caption="Choose one",
+    )
+
+
+def parse_pay_intent(messages: dict) -> bool:
+    """Natural-language pay / unlock intent (not only exact PAY)."""
+    pid, title = _extract_postback(messages)
+    if pid == BTN_PAYWALL_PAY:
+        return True
+    body = title
+    if not body and isinstance(messages, dict) and messages.get("type") == "text":
+        body = ((messages.get("text") or {}).get("body") or "").strip().lower()
+    body = (body or "").strip().lower()
+    if not body:
+        return False
+    if body == "pay":
+        return True
+    keywords = (
+        "unlock",
+        "payment",
+        "pay now",
+        "credits kharid",
+        "credit kharid",
+        "paise de",
+        "payment kar",
+    )
+    if body in ("haan", "ha", "yes", "ok", "okay") and False:
+        # bare haan alone is too ambiguous — only with pay context elsewhere
+        return False
+    return any(k in body for k in keywords) or body in (
+        "unlock",
+        "pay now",
+        "payment",
+    )
+
+
+def parse_paywall_choice(messages: dict) -> str | None:
+    """Return 'pay' | 'later' | None from paywall buttons."""
+    pid, title = _extract_postback(messages)
+    if pid == BTN_PAYWALL_PAY or title in ("pay now", "pay"):
+        return "pay"
+    if pid == BTN_PAYWALL_LATER or title in ("baad mein", "baad me", "later"):
+        return "later"
+    return None
 
 
 def _extract_postback(messages: dict) -> tuple[str, str]:

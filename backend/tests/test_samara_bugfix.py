@@ -302,22 +302,32 @@ def test_nfm_reply_regression(mongo):
     assert u["chart_json"]["meta"]["chart_type"] == "full"
 
 
-# ─── Test 6: Follow-up ungated (paywall OFF until Phase 2) ────────────────────
-def test_followup_not_paywalled_after_free_reading(mongo):
+# ─── Test 6: Paywall ON after free deep (Phase 2) ─────────────────────────────
+def test_paywall_after_free_reading(mongo):
     phone = "919876500033"
     u = mongo.users.find_one({"phone_number": phone, "client_id": "samara"})
     if not u or not u.get("free_reading_used"):
         pytest.skip("nfm_reply regression must have produced free reading first")
 
-    before = int(u.get("followup_questions_asked") or 0)
-    mongo.users.update_one({"_id": u["_id"]}, {"$set": {"credits": 0}})
+    mongo.users.update_one(
+        {"_id": u["_id"]},
+        {
+            "$set": {
+                "credits": 0,
+                "credit_ledger": [],
+                "free_deep_answer_used": True,
+                "conversation_beat": "post_free_deep",
+                "user_language": u.get("user_language") or "hindi",
+            }
+        },
+    )
     r = _post_webhook(_text_webhook(phone, "Career kaisa rahega?"))
     assert r.status_code == 200
 
     def check():
         u2 = mongo.users.find_one({"_id": u["_id"]})
-        if int(u2.get("followup_questions_asked") or 0) <= before:
-            return None
+        if u2.get("pending_deep_question"):
+            return u2
         ch = u2.get("chat_history") or []
         recent = " ".join(
             str(m.get("content") or "")
@@ -326,12 +336,12 @@ def test_followup_not_paywalled_after_free_reading(mongo):
         ).lower()
         if "coming soon" in recent:
             return None
-        if recent.strip():
+        if "unlock" in recent or "credits" in recent or "pay now" in recent:
             return u2
         return None
 
-    u_fu = _wait_for(check, timeout=45, interval=1.5)
-    assert u_fu is not None, "follow-up answer not delivered (paywall should be OFF)"
+    u_pay = _wait_for(check, timeout=45, interval=1.5)
+    assert u_pay is not None, "paywall gate not delivered when credits=0"
 
 
 # ─── Test 7: Gupshup subscription check ───────────────────────────────────────

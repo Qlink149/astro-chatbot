@@ -11,6 +11,7 @@ from kisna_chatbot.routes.system_sub_routes import conversation as conversation_
 from kisna_chatbot.routes.system_sub_routes import dashboard as dashboard_router
 from kisna_chatbot.routes.system_sub_routes import message_trace as message_trace_router
 from kisna_chatbot.routes.system_sub_routes import payments as payments_router
+from kisna_chatbot.routes.system_sub_routes import samara_jobs as samara_jobs_router
 from kisna_chatbot.routes.system_sub_routes import users as users_router
 from kisna_chatbot.utils.logger_config import logger
 
@@ -40,7 +41,12 @@ router.include_router(
     dependencies=[Depends(verify_token_or_api_key)],
 )
 
-router.include_router(payments_router.router)
+router.include_router(
+    payments_router.router,
+    dependencies=[Depends(verify_token_or_api_key)],
+)
+
+router.include_router(samara_jobs_router.router)
 
 
 @router.get("/ping", dependencies=[Depends(verify_token)])

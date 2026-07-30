@@ -319,7 +319,7 @@ def test_topic_choice_sends_free_deep_and_sets_flag():
     _run(go())
 
 
-def test_followup_is_not_paywalled():
+def test_followup_is_paywalled_after_free_deep():
     async def go():
         agent = mod.SamaraReadingAgent()
         profile = {
@@ -331,9 +331,53 @@ def test_followup_is_not_paywalled():
             "user_language": "english",
             "conversation_beat": BEAT_POST_FREE_DEEP,
             "credits": 0,
+            "credit_ledger": [],
+        }
+        data = {
+            "client_id": "samara",
+            "phone_number": "919999900001",
+            "user_profile": profile,
+            "messages": {
+                "type": "text",
+                "text": {"body": "what about my career?"},
+            },
+        }
+        out = await agent.process(data)
+        assert out["bot_response"][0]["type"] == "quickreply"
+        assert profile.get("pending_deep_question")
+        joined = out["bot_response"][0]["text"].lower()
+        assert "coming soon" not in joined
+
+    _run(go())
+
+
+def test_followup_with_credits_answers_and_debts():
+    async def go():
+        agent = mod.SamaraReadingAgent()
+        profile = {
+            "username": "Rahul",
+            "chat_history": [],
+            "chart_json": MIN_CHART,
+            "free_reading_used": True,
+            "free_deep_answer_used": True,
+            "user_language": "english",
+            "conversation_beat": BEAT_POST_FREE_DEEP,
+            "credits": 2,
+            "credit_ledger": [
+                {
+                    "type": "grant",
+                    "amount": 2,
+                    "source": "test",
+                    "timestamp": 1,
+                }
+            ],
         }
         with patch.object(
-            mod, "complete_chat", new=AsyncMock(return_value="[follow-up answer]")
+            mod, "complete_chat", new=AsyncMock(return_value="[paid answer]")
+        ), patch.object(
+            mod,
+            "debit_credit",
+            return_value={"credits": 1, "credit_ledger": profile["credit_ledger"]},
         ):
             data = {
                 "client_id": "samara",
@@ -345,8 +389,7 @@ def test_followup_is_not_paywalled():
                 },
             }
             out = await agent.process(data)
-        assert "[follow-up answer]" in out["bot_response"][0]["text"]
-        assert "credits chahiye" not in out["bot_response"][0]["text"]
+        assert "[paid answer]" in out["bot_response"][0]["text"]
 
     _run(go())
 

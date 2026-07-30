@@ -96,7 +96,9 @@ Login with `SUPER_ADMIN_USERNAME` / `SUPER_ADMIN_PASSWORD`.
 6. Topic → **Beat 4** one free deep answer + open loop; `free_deep_answer_used=true`.
 7. Returning users with a chart skip birth/Beat 1; continuity menu
    (`Wahi baat aage` / `Naya sawaal` / `Aaj ka muhurat`).
-8. Follow-ups remain **ungated** until Phase 2. Exact `PAY` still creates a Razorpay CTA.
+8. Follow-ups after the free deep answer require credits (paywall ON). Exact
+   `PAY` / `unlock` / Pay Now button create a Razorpay CTA; `[Baad mein]` exits
+   gracefully. Credits live on an append-only ledger.
 9. Funnel event counts appear on the admin Overview.
 
 ---
@@ -115,9 +117,9 @@ Login with `SUPER_ADMIN_USERNAME` / `SUPER_ADMIN_PASSWORD`.
 
 1. **LLM**: Samara `GENERAL` prefers Anthropic Haiku (`ANTHROPIC_CHAT_MODEL`) when
    the key is set; otherwise falls back to `AI_PROVIDER_GENERAL` (OpenAI/Groq).
-2. **Paywall**: intentionally OFF in `SamaraReadingAgent`. `PAYWALL_TEXT` still
-   mentions “coming soon” but is unused; Phase 2 turns the gate on and removes that copy.
-3. **Credits**: plain int on the user profile; no ledger yet (Phase 2).
+2. **Paywall**: ON after `free_deep_answer_used` when ledger balance is 0.
+   Honest copy + Pay Now / Baad mein. No “coming soon” in paywall text.
+3. **Credits**: append-only `credit_ledger` on the user; cached `credits` mirror.
 4. **BSP**: Gupshup only — no WATI.
 5. **Geocoding**: bundled Indian cities first; Nominatim fallback; IST 5.5 on TZ failure.
 6. **Dashboard**: readings = `free_reading_used`; follow-ups = sum of

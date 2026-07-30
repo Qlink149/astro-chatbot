@@ -226,10 +226,10 @@ class TestNoBirthTime:
         assert chart.get("lagna") is None, f"lagna should be None, got {chart.get('lagna')}"
 
 
-# ─── Test 4: Follow-ups ungated (paywall OFF until Phase 2) ──────────────────
+# ─── Test 4: Paywall ON after free deep (Phase 2) ────────────────────────────
 class TestPaywallAndFollowup:
-    def test_followup_not_paywalled_when_credits_zero(self, mongo):
-        """Paywall is intentionally OFF. Zero credits must still get a real answer."""
+    def test_paywall_after_free_path_when_credits_zero(self, mongo):
+        """After free deep, zero credits must show the gate (not a free answer)."""
         phone = "919876500013"
         mongo.users.delete_one({"phone_number": phone, "client_id": "samara"})
         _post_webhook(_text_webhook(phone, "Hi"))
@@ -248,18 +248,27 @@ class TestPaywallAndFollowup:
             lambda: mongo.users.find_one({"phone_number": phone, "client_id": "samara", "free_reading_used": True}),
             timeout=45, interval=2,
         )
-        assert u is not None, "free reading did not complete"
+        assert u is not None, "free reading/beats did not complete"
 
+        # Force post-free-deep + zero credits for gate test
         mongo.users.update_one(
             {"_id": u["_id"]},
-            {"$set": {"credits": 0, "followup_questions_asked": 0}},
+            {
+                "$set": {
+                    "credits": 0,
+                    "credit_ledger": [],
+                    "free_deep_answer_used": True,
+                    "conversation_beat": "post_free_deep",
+                    "user_language": "hindi",
+                }
+            },
         )
         _post_webhook(_text_webhook(phone, "Career kaisa rahega?"))
 
-        def followup_check():
+        def paywall_check():
             u2 = mongo.users.find_one({"_id": u["_id"]})
-            if int(u2.get("followup_questions_asked") or 0) < 1:
-                return None
+            if u2.get("pending_deep_question"):
+                return u2
             ch = u2.get("chat_history") or []
             last_bots = [
                 str(m.get("content") or "")
@@ -267,19 +276,14 @@ class TestPaywallAndFollowup:
                 if m.get("role") == "assistant"
             ]
             joined = " ".join(last_bots).lower()
-            # Must NOT be the dead paywall / "coming soon" copy
             if "coming soon" in joined:
                 return None
-            if "₹49" in joined and "credits chahiye" in joined:
-                return None
-            if last_bots:
+            if "credits" in joined or "unlock" in joined or "pay now" in joined:
                 return u2
             return None
 
-        u_fu = _wait_for(followup_check, timeout=45, interval=2)
-        assert u_fu is not None, "follow-up answer not observed (paywall should be OFF)"
-        # Credits must not be decremented while paywall is off
-        assert int(u_fu.get("credits") or 0) == 0
+        u_pay = _wait_for(paywall_check, timeout=45, interval=2)
+        assert u_pay is not None, "paywall gate not observed"
 
 
 # ─── Test 5: Geocode failure ─────────────────────────────────────────────────

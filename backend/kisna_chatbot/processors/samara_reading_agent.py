@@ -22,6 +22,7 @@ from kisna_chatbot.prompts.samara_reading import (
     SAMARA_FOLLOWUP_SYSTEM_PROMPT,
     SAMARA_MUHURAT_PROMPT,
 )
+from kisna_chatbot.payments.credit_ledger import debit_credit, get_credit_balance
 from kisna_chatbot.utils.format_chathistory import format_recent_history_str
 from kisna_chatbot.utils.funnel_events import emit_funnel_event
 from kisna_chatbot.utils.geocode_in import geocode_place, timezone_offset_for
@@ -43,8 +44,11 @@ from kisna_chatbot.utils.samara_beats import (
     mark_beat_send,
     parse_beat1_confirm,
     parse_beat2_advance,
+    parse_paywall_choice,
+    parse_pay_intent,
     parse_returning_choice,
     parse_topic_choice,
+    paywall_buttons,
     relevant_dasha_slice,
     returning_menu_buttons,
     text_responses,
@@ -96,13 +100,25 @@ NUDGE_TEXT = (
     "(date, time, place) share kar dijiye, phir main aapki kundli padh kar reading dungi. 🙏"
 )
 
-# Dead until Phase 2 gate — kept only so grep can find paywall copy to replace.
-PAYWALL_TEXT = (
-    "Aapka free reading ho chuka hai 🌙 Aur sawaal poochne ke liye credits chahiye — "
-    "₹49 mein 10 sawaal. 💫\n\n"
-    "Payments jald hi live ho rahe hain (Razorpay coming soon). Tab tak thoda intezaar kijiye — "
-    "main yahin hoon. 🙏"
+# Honest paywall — no urgency, no fear, no "coming soon".
+PAYWALL_TEXT_HI = (
+    "Aapka ek free deep answer ho chuka hai 🌙 "
+    "Aage ke gehre sawaal ke liye credits chahiye — unlock karne par aap "
+    "apni kundli par aur sawaal pooch sakte hain, aur main wahi open thread "
+    "se aage badhungi.\n\n"
+    "Neeche Pay Now se unlock kijiye, ya Baad mein dabaiye — bilkul theek hai."
 )
+PAYWALL_TEXT_EN = (
+    "You've used your one free deep answer 🌙 "
+    "Further deep questions need credits — unlocking lets you keep asking "
+    "from your chart, and I'll continue from where we left off.\n\n"
+    "Tap Pay Now below, or Baad mein if you'd rather wait — that's fine."
+)
+# Back-compat alias (tests / grep); must NOT contain "coming soon".
+PAYWALL_TEXT = PAYWALL_TEXT_HI
+
+BTN_PAYWALL_PAY = "samara_paywall_pay"
+BTN_PAYWALL_LATER = "samara_paywall_later"
 
 GEOCODE_FAIL_TEXT = (
     "Hmm, mujhe woh jagah nahi mili 😔 Koi baat nahi — form dobara khol kar "
@@ -298,11 +314,17 @@ class SamaraReadingAgent(Processor):
         messages = data.get("messages") or {}
         inbound_id = inbound_message_id(messages)
 
-        # Exact "PAY" test trigger → Razorpay payment link + CTA URL button.
+        # Exact PAY or natural-language pay intent → Razorpay CTA
         if messages.get("type") == "text":
             text_body = ((messages.get("text") or {}).get("body") or "")
-            if text_body.strip() == "PAY":
+            if text_body.strip() == "PAY" or parse_pay_intent(messages):
                 return await self._handle_pay_command(data, profile, phone_number)
+        elif parse_pay_intent(messages) or parse_paywall_choice(messages) == "pay":
+            return await self._handle_pay_command(data, profile, phone_number)
+
+        # Baad mein — graceful exit, schedule one-shot nudge
+        if parse_paywall_choice(messages) == "later":
+            return self._handle_paywall_later(data, profile, phone_number)
 
         # Idempotent: duplicate Gupshup delivery of an already-handled inbound
         # must not advance or regenerate beats.
@@ -874,7 +896,6 @@ class SamaraReadingAgent(Processor):
     async def _handle_followup(
         self, data: dict, profile: dict, phone_number: str
     ) -> dict:
-        # Payment blocker still OFF (Phase 2 turns gate on).
         question = ""
         if messages := data.get("messages"):
             question = ((messages.get("text") or {}).get("body") or "").strip()
@@ -887,39 +908,122 @@ class SamaraReadingAgent(Processor):
             ]
             return data
 
-        chart = profile.get("chart_json")
-        now_ctx = _now_context(chart)
-        lang = _lang(profile)
-        history_snippet = format_recent_history_str(profile, n=10) or "(no prior turns)"
-        instruction = SAMARA_FOLLOWUP_SYSTEM_PROMPT.format(
-            chart_json=json.dumps(chart, ensure_ascii=False),
-            user_name=profile.get("username") or "dost",
-            user_language=lang,
-            current_date=now_ctx["current_date"],
-            current_year=now_ctx["current_year"],
-            current_age=now_ctx["current_age"],
-            chat_history_snippet=history_snippet,
-        )
-        try:
-            text = await self._llm(
-                instruction=instruction,
-                user_content=question,
-                phone_number=phone_number,
-                agent_display_name="SamaraFollowupAgent",
-                max_output_tokens=500,
-                use_sonnet=False,
+        # Gate ON: free deep used + zero balance → paywall (not before).
+        if profile.get("free_deep_answer_used") and get_credit_balance(profile) <= 0:
+            profile["pending_deep_question"] = question
+            emit_funnel_event("gate_shown", phone_number=phone_number)
+            body = (
+                PAYWALL_TEXT_EN
+                if _lang(profile) == "english"
+                else PAYWALL_TEXT_HI
             )
-        except Exception:
-            logger.exception(
-                "Samara follow-up LLM call failed",
-                extra={"phone_number": phone_number},
-            )
-            data["bot_response"] = [{"type": "text", "text": ERROR_TEXT}]
+            data["bot_response"] = [paywall_buttons(lang=_lang(profile), body=body)]
             return data
 
-        profile["followup_questions_asked"] = (
-            int(profile.get("followup_questions_asked") or 0) + 1
+        result = await deliver_paid_deep_answer(
+            profile=profile,
+            phone_number=phone_number,
+            question=question,
+            debit=profile.get("free_deep_answer_used") is True,
         )
-        profile["conversation_beat"] = BEAT_POST_FREE_DEEP
+        if not result:
+            data["bot_response"] = [{"type": "text", "text": ERROR_TEXT}]
+            return data
+        text, _ = result
         data["bot_response"] = text_responses(text)
         return data
+
+    def _handle_paywall_later(
+        self, data: dict, profile: dict, phone_number: str
+    ) -> dict:
+        profile["paywall_deferred"] = True
+        profile["nudge_scheduled_at"] = int(datetime.now(timezone.utc).timestamp()) + 86400
+        profile["nudge_sent"] = False
+        profile["pending_deep_question"] = profile.get("pending_deep_question")
+        lang = _lang(profile)
+        text = (
+            "Bilkul theek hai 🙏 Jab ready ho, 'pay' ya 'unlock' likh dena — "
+            "main yahin hoon, bina pressure ke."
+            if lang != "english"
+            else "Of course 🙏 When you're ready, just type pay or unlock — "
+            "I'll be here, no pressure."
+        )
+        data["bot_response"] = [{"type": "text", "text": text}]
+        return data
+
+
+async def deliver_paid_deep_answer(
+    *,
+    profile: dict,
+    phone_number: str,
+    question: str,
+    debit: bool = True,
+) -> tuple[str, dict] | None:
+    """Generate a deep/follow-up answer; debit one credit only after success.
+
+    Used by follow-ups and by Razorpay resume. LLM never computes chart facts.
+    """
+    chart = profile.get("chart_json")
+    now_ctx = _now_context(chart)
+    lang = _lang(profile)
+    history_snippet = format_recent_history_str(profile, n=10) or "(no prior turns)"
+    instruction = SAMARA_FOLLOWUP_SYSTEM_PROMPT.format(
+        chart_json=json.dumps(chart, ensure_ascii=False),
+        user_name=profile.get("username") or "dost",
+        user_language=lang,
+        current_date=now_ctx["current_date"],
+        current_year=now_ctx["current_year"],
+        current_age=now_ctx["current_age"],
+        chat_history_snippet=history_snippet,
+    )
+    sonnet, haiku = _sonnet_models()
+    try:
+        text = await complete_chat(
+            agent=AgentName.GENERAL,
+            agent_display_name="SamaraPaidDeep",
+            instruction=instruction,
+            messages=[{"role": "user", "content": question}],
+            max_output_tokens=500,
+            phone_number=phone_number,
+            client_id="samara",
+            model=sonnet if debit else haiku,
+            model_fallback=haiku if debit else None,
+        )
+    except Exception:
+        logger.exception(
+            "deliver_paid_deep_answer LLM failed",
+            extra={"phone_number": phone_number},
+        )
+        return None
+
+    # Debit only after successful generation (never on LLM failure).
+    if debit and profile.get("free_deep_answer_used"):
+        updated = debit_credit(
+            phone_number=phone_number,
+            client_id="samara",
+            amount=1,
+            source="deep_answer",
+        )
+        if updated:
+            profile["credits"] = updated.get("credits")
+            profile["credit_ledger"] = updated.get("credit_ledger")
+        else:
+            # In-memory debit fallback for tests without mongo write
+            entries = list(profile.get("credit_ledger") or [])
+            entries.append(
+                {
+                    "type": "debit",
+                    "amount": 1,
+                    "source": "deep_answer",
+                    "timestamp": int(datetime.now(timezone.utc).timestamp()),
+                }
+            )
+            profile["credit_ledger"] = entries
+            profile["credits"] = get_credit_balance(profile)
+
+    profile["followup_questions_asked"] = (
+        int(profile.get("followup_questions_asked") or 0) + 1
+    )
+    profile["conversation_beat"] = BEAT_POST_FREE_DEEP
+    profile["open_loop_summary"] = (text or "")[-400:]
+    return text, profile
