@@ -114,7 +114,34 @@ Login with `SUPER_ADMIN_USERNAME` / `SUPER_ADMIN_PASSWORD`.
 
 ---
 
-## 7. Data retention & deletion (DPDP)
+## 7. Nudge template — Meta approval steps
+
+Samara sends a one-shot nudge 24 hours after a user taps "Baad mein" (later).
+Outside the WhatsApp 24-hour session window, only **approved templates** are
+delivered. To get the nudge working:
+
+1. **Create the template** in Gupshup Partner → Templates → New Template.
+   - Category: **UTILITY** (post-purchase follow-up).
+   - Language: **Hindi (hi)** — the template body should match `NUDGE_TEXT_HI`
+     in `samara_jobs.py` (or a cleaned version of it).
+   - Example body:
+     ```
+     Namaste 🙏 Samara, by Clara. Aapki kundli wali baat abhi bhi yahin hai —
+     jab ready ho, 'pay' ya 'unlock' likh dena. Bilkul koi rush nahi. 🌙
+     ```
+   - No parameters needed (no `{{1}}`).
+2. **Submit for Meta review.** Approval typically takes 1–24 hours.
+3. Once approved, set the env var:
+   ```
+   SAMARA_NUDGE_TEMPLATE=<approved_element_name>
+   ```
+4. The cron job `POST /system/samara/send-deferred-nudges` (with
+   `SYSTEM_API_KEY`) will try the template first; if it fails or is unset, it
+   falls back to a session text (which may silently fail outside 24h).
+
+---
+
+## 8. Data retention & deletion (DPDP)
 
 - User can type **"delete my data"** or **"mera data delete karo"** at any time.
   PII, birth details, chart, chat history, confirmed events are purged immediately.
@@ -130,7 +157,7 @@ Login with `SUPER_ADMIN_USERNAME` / `SUPER_ADMIN_PASSWORD`.
 
 ---
 
-## 8. Assumptions / known drift
+## 9. Assumptions / known drift
 
 1. **LLM**: Samara `GENERAL` prefers Anthropic Haiku (`ANTHROPIC_CHAT_MODEL`) when
    the key is set; otherwise falls back to `AI_PROVIDER_GENERAL` (OpenAI/Groq).

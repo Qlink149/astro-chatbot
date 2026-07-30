@@ -60,28 +60,69 @@ def send_deferred_nudges():
     return {"ok": True, "due": len(due), "sent": sent, "template": template or None}
 
 
+NUDGE_TEXT_HI = (
+    "Namaste 🙏 Samara, by Clara. "
+    "Aapki kundli wali baat abhi bhi yahin hai — jab ready ho, "
+    "'pay' ya 'unlock' likh dena aur main wahi se aage badhaungi. "
+    "Bilkul koi rush nahi. 🌙"
+)
+NUDGE_TEXT_EN = (
+    "Namaste 🙏 Samara, by Clara. "
+    "Your chart reading is still right here — when you're ready, "
+    "type 'pay' or 'unlock' and I'll continue right where we left off. "
+    "No rush at all. 🌙"
+)
+
+
 def _send_nudge(phone_number: str, template_name: str) -> None:
-    """Send approved Gupshup template if configured; else a soft text (may fail outside 24h window)."""
+    """Send approved Gupshup template if SAMARA_NUDGE_TEMPLATE is set;
+    else fall back to a soft text (may fail outside 24h window)."""
     from kisna_chatbot.whatsapp_functions.send_text_message import (
         send_text_message_with_retry,
     )
 
     if template_name:
-        # Placeholder for Partner template send — env holds the approved element name.
-        # Until Meta approves SAMARA_NUDGE_TEMPLATE, fall through to text.
-        logger.info(
-            "Samara nudge template requested",
-            extra={"template": template_name, "phone_number": phone_number},
-        )
+        try:
+            _send_template_message(phone_number, template_name)
+            logger.info(
+                "Samara nudge template sent",
+                extra={"template": template_name, "phone_number": phone_number},
+            )
+            return
+        except Exception:
+            logger.exception(
+                "Samara nudge template failed, falling back to text",
+                extra={"template": template_name, "phone_number": phone_number},
+            )
 
     send_text_message_with_retry(
         phone_number=phone_number,
-        bot_response={
-            "type": "text",
-            "text": (
-                "Namaste 🙏 Jab aap ready hon, main aapki kundli wali baat "
-                "wahi se aage badha sakti hoon. 'pay' ya 'unlock' likh dena — "
-                "bina kisi pressure ke. 🌙"
-            ),
-        },
+        bot_response={"type": "text", "text": NUDGE_TEXT_HI},
     )
+
+
+def _send_template_message(phone_number: str, template_name: str) -> None:
+    """Send a pre-approved Gupshup template message."""
+    import requests
+    from kisna_chatbot.constants import GUPSHUP_SOURCE
+
+    app_name = os.environ.get("GUPSHUP_APP_NAME", "")
+    api_key = os.environ.get("GUPSHUP_API_KEY", "")
+    if not app_name or not api_key:
+        raise RuntimeError("GUPSHUP_APP_NAME / GUPSHUP_API_KEY not set")
+
+    payload = {
+        "channel": "whatsapp",
+        "source": GUPSHUP_SOURCE,
+        "destination": phone_number,
+        "template": '{"id":"%s","params":[]}' % template_name,
+        "src.name": app_name,
+    }
+    headers = {"apikey": api_key, "Content-Type": "application/x-www-form-urlencoded"}
+    resp = requests.post(
+        "https://api.gupshup.io/wa/api/v1/template/msg",
+        data=payload,
+        headers=headers,
+        timeout=15,
+    )
+    resp.raise_for_status()
