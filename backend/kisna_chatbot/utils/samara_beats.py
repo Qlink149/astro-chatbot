@@ -21,6 +21,7 @@ BEAT_2C_AWAITING_DETAIL = "beat2c_awaiting_detail"
 BEAT_AWAITING_TOPIC = "awaiting_topic"
 BEAT_POST_FREE_DEEP = "post_free_deep"
 BEAT_RETURNING_MENU = "returning_menu"
+BEAT_TRUST_RECOVERY = "trust_recovery"
 
 ACTIVE_INTRO_BEATS = frozenset(
     {
@@ -56,6 +57,8 @@ BTN_RET_NEW = "samara_ret_new"
 BTN_RET_MUHURAT = "samara_ret_muhurat"
 BTN_PAYWALL_PAY = "samara_paywall_pay"
 BTN_PAYWALL_LATER = "samara_paywall_later"
+BTN_WANT_MORE = "samara_want_more"
+BTN_ENOUGH_FOR_NOW = "samara_enough_for_now"
 
 TOPIC_BY_POSTBACK = {
     BTN_TOPIC_CAREER: "career",
@@ -277,6 +280,39 @@ def dated_anchors_available(chart: dict | None) -> bool:
     return bool(meta.get("dated_anchors_available"))
 
 
+def beat2a_quality_points(chart: dict | None) -> list[dict]:
+    """Turning points usable for Beat 2a (age span ≤7 + theme). Empty → skip 2a."""
+    out: list[dict] = []
+    for p in (chart or {}).get("turning_points") or []:
+        if not isinstance(p, dict):
+            continue
+        a0 = p.get("age_start")
+        a1 = p.get("age_end")
+        try:
+            if a0 is None or a1 is None:
+                continue
+            a0i, a1i = int(a0), int(a1)
+            if a1i < 15:
+                continue
+            if (a1i - a0i) > 7:
+                continue
+        except (TypeError, ValueError):
+            continue
+        if not (p.get("theme_en") or p.get("theme_hi")):
+            continue
+        out.append(
+            {
+                "age_start": a0i,
+                "age_end": a1i,
+                "theme_en": p.get("theme_en"),
+                "theme_hi": p.get("theme_hi"),
+                "window_label_en": p.get("window_label_en"),
+                "window_label_hi": p.get("window_label_hi"),
+            }
+        )
+    return out
+
+
 def next_turning_point(profile: dict, chart: dict | None) -> dict | None:
     """Pick strongest unused turning point not in rejected_windows."""
     points = list((chart or {}).get("turning_points") or [])
@@ -351,9 +387,17 @@ def returning_menu_buttons(*, lang: str, name: str) -> dict:
     )
 
 
-def paywall_buttons(*, lang: str, body: str) -> dict:
-    pay_t = "Pay Now" if lang == "english" else "Pay Now"
-    later_t = "Baad mein"
+def paywall_buttons(*, lang: str, body: str, amount_inr: float | None = None) -> dict:
+    from kisna_chatbot.payments.service import test_payment_amount_inr
+
+    amt = amount_inr if amount_inr is not None else test_payment_amount_inr()
+    amt_s = str(int(amt)) if float(amt).is_integer() else f"{amt:g}"
+    if lang == "english":
+        pay_t = f"See more — ₹{amt_s}"[:20]
+        later_t = "Later"
+    else:
+        pay_t = f"Haan — ₹{amt_s}"[:20]
+        later_t = "Baad mein"
     return _quickreply(
         body,
         "samara_paywall",
@@ -363,6 +407,87 @@ def paywall_buttons(*, lang: str, body: str) -> dict:
         ],
         caption="Choose one",
     )
+
+
+def want_more_buttons(*, lang: str, body: str) -> dict:
+    """After free surface cliff — invite without burning another LLM call."""
+    if lang == "english":
+        yes_t, no_t = "Yes, tell me", "I'm good for now"
+    else:
+        yes_t, no_t = "Haan, batao", "Abhi theek hai"
+    return _quickreply(
+        body,
+        "samara_want_more",
+        [
+            {"type": "text", "title": yes_t[:20], "postbackText": BTN_WANT_MORE},
+            {"type": "text", "title": no_t[:20], "postbackText": BTN_ENOUGH_FOR_NOW},
+        ],
+        caption="Choose one",
+    )
+
+
+def parse_want_more_choice(messages: dict) -> str | None:
+    """Return 'more' | 'enough' | None from cliff QR or free-text."""
+    pid, title = _extract_postback(messages)
+    if pid == BTN_WANT_MORE:
+        return "more"
+    if pid == BTN_ENOUGH_FOR_NOW:
+        return "enough"
+    body = title or ""
+    if not body and isinstance(messages, dict) and messages.get("type") == "text":
+        body = ((messages.get("text") or {}).get("body") or "").strip().lower()
+    body = (body or "").strip().lower()
+    if not body:
+        return None
+    more_phrases = (
+        "haan batao",
+        "haan, batao",
+        "aur batao",
+        "aur jaanna",
+        "tell me more",
+        "yes tell me",
+        "want to know more",
+        "woh sunna",
+        "filter batao",
+        "aage batao",
+    )
+    enough_phrases = (
+        "abhi theek",
+        "i'm good",
+        "im good",
+        "theek hai abhi",
+        "baad mein sochung",
+        "enough for now",
+    )
+    if any(p in body for p in more_phrases):
+        return "more"
+    if any(p in body for p in enough_phrases):
+        return "enough"
+    return None
+
+
+_BROKE_PHRASES = (
+    "don't have money",
+    "dont have money",
+    "no money",
+    "paas paise nahi",
+    "paise nahi",
+    "paisa nahi",
+    "afford nahi",
+    "can't pay",
+    "cant pay",
+    "broke",
+    "free mein",
+    "free me chat",
+    "bina pay",
+)
+
+
+def looks_like_broke_objection(text: str) -> bool:
+    t = (text or "").strip().lower()
+    if not t:
+        return False
+    return any(p in t for p in _BROKE_PHRASES)
 
 
 def parse_pay_intent(messages: dict) -> bool:
@@ -400,10 +525,14 @@ def parse_pay_intent(messages: dict) -> bool:
 def parse_paywall_choice(messages: dict) -> str | None:
     """Return 'pay' | 'later' | None from paywall buttons."""
     pid, title = _extract_postback(messages)
-    if pid == BTN_PAYWALL_PAY or title in ("pay now", "pay"):
-        return "pay"
     if pid == BTN_PAYWALL_LATER or title in ("baad mein", "baad me", "later"):
         return "later"
+    if pid == BTN_PAYWALL_PAY:
+        return "pay"
+    if title in ("pay now", "pay") or title.startswith("see more") or (
+        title.startswith("haan") and "₹" in title
+    ):
+        return "pay"
     return None
 
 

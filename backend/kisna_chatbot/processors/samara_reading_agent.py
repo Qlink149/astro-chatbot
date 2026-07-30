@@ -32,6 +32,15 @@ from kisna_chatbot.utils.format_chathistory import (
     maybe_refresh_conversation_summary,
 )
 from kisna_chatbot.utils.funnel_events import emit_funnel_event
+from kisna_chatbot.utils.samara_gate import (
+    bump_trust,
+    clear_bot_asked_question,
+    count_gate_messages,
+    decide_gate_action,
+    door_gate_body,
+    mark_bot_asked_question,
+    needs_trust_recovery,
+)
 from kisna_chatbot.utils.geocode_in import geocode_place, timezone_offset_for
 from kisna_chatbot.utils.distress import (
     assess_distress,
@@ -53,11 +62,13 @@ from kisna_chatbot.utils.samara_beats import (
     BEAT_AWAITING_TOPIC,
     BEAT_POST_FREE_DEEP,
     BEAT_RETURNING_MENU,
+    BEAT_TRUST_RECOVERY,
     MAX_DATED_WINDOWS_PER_SESSION,
     TOPIC_LABELS,
     beat1_confirm_buttons,
     beat2_next_button,
     beat2a_confirm_buttons,
+    beat2a_quality_points,
     beat2b_confirm_buttons,
     claim_beat_transition,
     dated_anchors_available,
@@ -75,12 +86,15 @@ from kisna_chatbot.utils.samara_beats import (
     parse_pay_intent,
     parse_returning_choice,
     parse_topic_choice,
+    parse_want_more_choice,
     parse_yes_no_freetext,
     paywall_buttons,
+    looks_like_broke_objection,
     relevant_dasha_slice,
     returning_menu_buttons,
     text_responses,
     topic_picker_buttons,
+    want_more_buttons,
 )
 
 
@@ -117,7 +131,7 @@ _TEXT_DATE_RE = re.compile(r"\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})\b")
 _TEXT_DATE_ISO_RE = re.compile(r"\b(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})\b")
 _TEXT_TIME_RE = re.compile(r"\b([01]?\d|2[0-3])[:.]([0-5]\d)\b")
 
-GREETING_TEXT = (
+GREETING_TEXT_HI = (
     "Namaste 🙏 Main Samara hoon — aapki personal Vedic astrology guide, by Clara. ✨\n\n"
     "Aapki asli janam kundli banane ke liye mujhe bas aapki birth details chahiye — "
     "date, time aur place of birth. Neeche form khol kar share kar dijiye, "
@@ -126,31 +140,68 @@ GREETING_TEXT = (
     "Yeh reflection aur enjoyment ke liye hai — medical, legal ya financial advice nahi. "
     "Kabhi bhi 'delete my data' likh kar apna data hata sakte hain."
 )
+GREETING_TEXT_EN = (
+    "Namaste 🙏 I'm Samara — your personal Vedic astrology guide, by Clara. ✨\n\n"
+    "To build your real birth chart I just need your birth details — "
+    "date, time, and place. Open the form below to share them, "
+    "then I'll write a warm, personal reading for you. 🌙\n\n"
+    "📝 Your details are only used for your reading. "
+    "This is for reflection and enjoyment — not medical, legal, or financial advice. "
+    "You can type 'delete my data' anytime to remove your data."
+)
+GREETING_TEXT = GREETING_TEXT_HI
 
-NUDGE_TEXT = (
+NUDGE_TEXT_HI = (
     "Bas ek chhota sa step baaki hai ✨ — neeche form se apni birth details "
     "(date, time, place) share kar dijiye, phir main aapki kundli padh kar reading dungi. 🙏"
 )
+NUDGE_TEXT_EN = (
+    "Just one small step left ✨ — share your birth details "
+    "(date, time, place) in the form below, and I'll read your chart. 🙏"
+)
+NUDGE_TEXT = NUDGE_TEXT_HI
 
-# Honest paywall — no urgency, no fear, no "coming soon".
+# First-gate / door — never meter consumption language as primary.
 PAYWALL_TEXT_HI = (
-    "Aapka ek free deep answer ho chuka hai 🌙 "
-    "Aage ke gehre sawaal ke liye credits chahiye — unlock karne par aap "
-    "apni kundli par aur sawaal pooch sakte hain, aur main wahi open thread "
-    "se aage badhungi.\n\n"
-    "Neeche Pay Now se unlock kijiye, ya Baad mein dabaiye — bilkul theek hai."
+    "Woh jawab poora hai 🌙 "
+    "Chart ke clear windows aur poori tasveer — jab ready ho unlock kariye.\n\n"
+    "Neeche se aage badhein, ya Baad mein — bilkul theek hai."
 )
 PAYWALL_TEXT_EN = (
-    "You've used your one free deep answer 🌙 "
-    "Further deep questions need credits — unlocking lets you keep asking "
-    "from your chart, and I'll continue from where we left off.\n\n"
-    "Tap Pay Now below, or Baad mein if you'd rather wait — that's fine."
+    "That answer stands on its own 🌙 "
+    "The clearer windows and full picture are here when you're ready.\n\n"
+    "Continue below, or Later — both are fine."
 )
-# Back-compat alias (tests / grep); must NOT contain "coming soon".
+# Back-compat alias (tests / grep); must NOT contain "coming soon" or "last credit".
 PAYWALL_TEXT = PAYWALL_TEXT_HI
 
 BTN_PAYWALL_PAY = "samara_paywall_pay"
 BTN_PAYWALL_LATER = "samara_paywall_later"
+
+ENOUGH_ACK_HI = (
+    "Bilkul theek hai 🙏 Jab ready ho, pay likh dena — "
+    "main wahi thread yaad rakhungi."
+)
+ENOUGH_ACK_EN = (
+    "Of course 🙏 When you're ready, type pay — "
+    "I'll keep this thread."
+)
+
+BROKE_TEXT_HI = (
+    "Samajh sakti hoon 🙏 Koi rush nahi. Jab ready ho unlock kariye, "
+    "ya Baad mein — main yahin hoon."
+)
+BROKE_TEXT_EN = (
+    "I hear you 🙏 No rush. Unlock when you're ready, "
+    "or Later — I'm here."
+)
+
+CANNED_MUHURAT_HI = (
+    "Aaj ka short note ✨ Din calm rakho, bade faisle rush mein mat lo."
+)
+CANNED_MUHURAT_EN = (
+    "Quick note for today ✨ Keep the day calm — don't rush big calls."
+)
 
 GEOCODE_FAIL_TEXT = (
     "Hmm, mujhe woh jagah nahi mili 😔 Koi baat nahi — form dobara khol kar "
@@ -376,6 +427,52 @@ def _has_completed_free_path(profile: dict) -> bool:
     )
 
 
+def _is_post_gate_locked(profile: dict) -> bool:
+    """Free surface used + no credits → no generative astrology LLM."""
+    return bool(
+        profile.get("free_deep_answer_used")
+        and get_credit_balance(profile) <= 0
+    )
+
+
+def _payment_amount_inr() -> float:
+    from kisna_chatbot.payments.service import test_payment_amount_inr
+
+    return test_payment_amount_inr()
+
+
+def _emit_door_gate(
+    data: dict,
+    profile: dict,
+    phone_number: str,
+    *,
+    pending: str | None = None,
+    body: str | None = None,
+) -> dict:
+    """Single gate emitter — door framing only; at most one paywall QR."""
+    if pending:
+        profile["pending_deep_question"] = pending
+    emit_funnel_event("gate_shown", phone_number=phone_number)
+    amt = _payment_amount_inr()
+    text = body or door_gate_body(profile, amount_inr=amt)
+    data["bot_response"] = [
+        paywall_buttons(lang=_lang(profile), body=text, amount_inr=amt)
+    ]
+    assert count_gate_messages(data["bot_response"]) <= 1
+    return data
+
+
+def _warm_paywall_body(profile: dict) -> str:
+    """Back-compat alias → door body (no meter language)."""
+    return door_gate_body(profile, amount_inr=_payment_amount_inr())
+
+
+def _emit_warm_paywall(
+    data: dict, profile: dict, phone_number: str, *, pending: str | None = None
+) -> dict:
+    return _emit_door_gate(data, profile, phone_number, pending=pending)
+
+
 def _lang(profile: dict) -> str:
     return profile.get("user_language") or "hindi"
 
@@ -460,25 +557,37 @@ class SamaraReadingAgent(Processor):
         profile.setdefault("credits", 0)
         profile.setdefault("free_reading_used", False)
         profile.setdefault("free_deep_answer_used", False)
+        profile.setdefault("bot_asked_question", False)
+        profile.setdefault("bot_question_context", None)
+        profile.setdefault("trust_score", 0)
+        profile.setdefault("trust_recovery_attempts", 0)
+        profile.setdefault("gate_suppressed_session", False)
+        profile.setdefault("in_trust_recovery", False)
+        profile.setdefault("paywall_pitch_suppressed", False)
         messages = data.get("messages") or {}
         inbound_id = inbound_message_id(messages)
 
         # Distress path — BEFORE paywall, beats, or any astrology LLM.
         inbound_text = extract_inbound_text(messages)
         if inbound_text:
+            # Post-gate: keyword failsafe only (no Haiku) — still catch self-harm.
+            classify_fn = None
+            if not _is_post_gate_locked(profile):
 
-            async def _distress_classify(instruction: str, user_text: str) -> str:
-                return await self._llm(
-                    instruction=instruction,
-                    user_content=user_text,
-                    phone_number=phone_number,
-                    agent_display_name="SamaraDistress",
-                    max_output_tokens=80,
-                    purpose="distress",
-                )
+                async def _distress_classify(instruction: str, user_text: str) -> str:
+                    return await self._llm(
+                        instruction=instruction,
+                        user_content=user_text,
+                        phone_number=phone_number,
+                        agent_display_name="SamaraDistress",
+                        max_output_tokens=80,
+                        purpose="distress",
+                    )
+
+                classify_fn = _distress_classify
 
             flagged = await assess_distress(
-                inbound_text, classify_fn=_distress_classify
+                inbound_text, classify_fn=classify_fn
             )
             if flagged.distress:
                 emit_funnel_event("distress_flagged", phone_number=phone_number)
@@ -493,6 +602,21 @@ class SamaraReadingAgent(Processor):
                 ]
                 return data
 
+        # Task 1: solicited reply — always free, never gate/debit.
+        if profile.get("bot_asked_question") and (
+            inbound_text
+            or (messages.get("type") in ("interactive", "button", "text"))
+        ):
+            beat_now = profile.get("conversation_beat")
+            if beat_now == BEAT_TRUST_RECOVERY and inbound_text:
+                return await self._handle_trust_recovery_reply(
+                    data, profile, phone_number, inbound_text
+                )
+            if beat_now not in ACTIVE_INTRO_BEATS and inbound_text:
+                return await self._handle_solicited_reply(
+                    data, profile, phone_number, inbound_text
+                )
+
         # Exact PAY or natural-language pay intent → Razorpay CTA
         if messages.get("type") == "text":
             text_body = ((messages.get("text") or {}).get("body") or "")
@@ -504,6 +628,98 @@ class SamaraReadingAgent(Processor):
         # Baad mein — graceful exit, schedule one-shot nudge
         if parse_paywall_choice(messages) == "later":
             return self._handle_paywall_later(data, profile, phone_number)
+
+        # Post-gate: free deep used + 0 credits → door gate (unless suppressed/recovery).
+        if _is_post_gate_locked(profile) and not profile.get("bot_asked_question"):
+            if profile.get("gate_suppressed_session") or profile.get("in_trust_recovery"):
+                pass  # fall through — no gate this session
+            elif profile.get("paywall_pitch_suppressed"):
+                lang = _lang(profile)
+                data["bot_response"] = [
+                    {
+                        "type": "text",
+                        "text": (
+                            "I'm here when you're ready — no rush."
+                            if lang == "english"
+                            else "Jab ready ho, main yahin hoon — koi rush nahi."
+                        ),
+                    }
+                ]
+                return data
+            else:
+                want = parse_want_more_choice(messages)
+                if want == "more":
+                    action = decide_gate_action(
+                        profile, amount_inr=_payment_amount_inr()
+                    )
+                    if action.kind == "door":
+                        return _emit_door_gate(
+                            data, profile, phone_number, pending="want_more", body=action.body
+                        )
+                    if needs_trust_recovery(profile):
+                        return self._enter_trust_recovery(data, profile, phone_number)
+                    return data
+                if want == "enough":
+                    lang = _lang(profile)
+                    data["bot_response"] = [
+                        {
+                            "type": "text",
+                            "text": ENOUGH_ACK_EN if lang == "english" else ENOUGH_ACK_HI,
+                        }
+                    ]
+                    return data
+                if inbound_text and looks_like_broke_objection(inbound_text):
+                    action = decide_gate_action(
+                        profile, amount_inr=_payment_amount_inr()
+                    )
+                    if action.kind == "door":
+                        return _emit_door_gate(
+                            data, profile, phone_number, pending="broke", body=action.body
+                        )
+                    return data
+                ret = parse_returning_choice(messages)
+                if ret == "continue" or ret == "new":
+                    action = decide_gate_action(
+                        profile, amount_inr=_payment_amount_inr()
+                    )
+                    if action.kind == "door":
+                        return _emit_door_gate(
+                            data, profile, phone_number, pending=ret, body=action.body
+                        )
+                    if needs_trust_recovery(profile):
+                        return self._enter_trust_recovery(data, profile, phone_number)
+                    return data
+                if ret == "muhurat":
+                    lang = _lang(profile)
+                    data["bot_response"] = [
+                        {
+                            "type": "text",
+                            "text": (
+                                CANNED_MUHURAT_EN
+                                if lang == "english"
+                                else CANNED_MUHURAT_HI
+                            ),
+                        }
+                    ]
+                    return data
+                text_body = ""
+                if messages.get("type") == "text":
+                    text_body = ((messages.get("text") or {}).get("body") or "").strip()
+                if text_body and not looks_like_greeting(text_body):
+                    if needs_trust_recovery(profile):
+                        return self._enter_trust_recovery(data, profile, phone_number)
+                    action = decide_gate_action(
+                        profile, amount_inr=_payment_amount_inr()
+                    )
+                    if action.kind == "door":
+                        return _emit_door_gate(
+                            data,
+                            profile,
+                            phone_number,
+                            pending=text_body,
+                            body=action.body,
+                        )
+                # Greetings / empty → fall through to returning menu
 
         # ── Language switch (any time) ─────────────────────────────────
         if inbound_text:
@@ -530,6 +746,10 @@ class SamaraReadingAgent(Processor):
                 "open_loop_summary", "chosen_topic",
                 "beat_last_inbound_id", "conversation_summary",
                 "pending_deep_question",
+                "bot_asked_question", "bot_question_context",
+                "trust_score", "trust_recovery_attempts",
+                "gate_suppressed_session", "in_trust_recovery",
+                "paywall_pitch_suppressed",
             ):
                 profile.pop(key, None)
             confirm = RESTART_CONFIRM_TEXT_EN if lang == "english" else RESTART_CONFIRM_TEXT_HI
@@ -561,8 +781,19 @@ class SamaraReadingAgent(Processor):
                 )
             is_new = not profile.get("chat_history")
             emit_funnel_event("birth_flow_opened", phone_number=phone_number)
+            # Language may be unknown pre-chart; default Hindi greeting, English if set
+            greet = (
+                GREETING_TEXT_EN
+                if profile.get("user_language") == "english"
+                else GREETING_TEXT_HI
+            )
+            nudge = (
+                NUDGE_TEXT_EN
+                if profile.get("user_language") == "english"
+                else NUDGE_TEXT_HI
+            )
             data["bot_response"] = [
-                {"type": "text", "text": GREETING_TEXT if is_new else NUDGE_TEXT},
+                {"type": "text", "text": greet if is_new else nudge},
                 {"type": "flow", "flow": "birth_details"},
             ]
             return data
@@ -605,6 +836,12 @@ class SamaraReadingAgent(Processor):
                     ]
                     return data
                 emit_funnel_event("beat1_confirmed", phone_number=phone_number)
+                if conf == "yes":
+                    bump_trust(profile, 2)
+                elif conf == "soft":
+                    bump_trust(profile, 0)
+                else:
+                    bump_trust(profile, -1)
                 return await self._send_beat2_entry(
                     data, profile, phone_number, inbound_id, confirm_signal=conf
                 )
@@ -628,6 +865,7 @@ class SamaraReadingAgent(Processor):
                     data["bot_response"] = [{"type": "skip"}]
                     return data
                 emit_funnel_event("beat_2a_confirmed", phone_number=phone_number)
+                bump_trust(profile, 2)
                 return await self._send_beat2b(
                     data, profile, phone_number, inbound_id, alt=False
                 )
@@ -641,6 +879,9 @@ class SamaraReadingAgent(Processor):
                     data["bot_response"] = [{"type": "skip"}]
                     return data
                 emit_funnel_event("beat_2a_rejected", phone_number=phone_number)
+                bump_trust(profile, -2)
+                if needs_trust_recovery(profile):
+                    return self._enter_trust_recovery(data, profile, phone_number)
                 warm = (
                     "Har chart alag hota hai — chaliye aage dekhte hain. 🙏"
                     if _lang(profile) != "english"
@@ -671,6 +912,9 @@ class SamaraReadingAgent(Processor):
                     data["bot_response"] = [{"type": "skip"}]
                     return data
                 emit_funnel_event("beat_2b_date_confirmed", phone_number=phone_number)
+                bump_trust(profile, 3)
+                if free_text.strip():
+                    bump_trust(profile, 1)
                 _record_confirmed_event(profile, pending, free_text)
                 return await self._send_beat2c(
                     data,
@@ -682,6 +926,7 @@ class SamaraReadingAgent(Processor):
                 )
             if result == "no":
                 emit_funnel_event("beat_2b_date_rejected", phone_number=phone_number)
+                bump_trust(profile, -1)
                 _record_rejected_window(profile, pending)
                 profile["beat2_pending_window"] = None
                 offered = int(profile.get("beat2_windows_offered") or 0)
@@ -770,6 +1015,33 @@ class SamaraReadingAgent(Processor):
         if beat == BEAT_AWAITING_TOPIC:
             topic = parse_topic_choice(messages)
             if topic:
+                if needs_trust_recovery(profile):
+                    profile["chosen_topic"] = topic
+                    return self._enter_trust_recovery(data, profile, phone_number)
+                # Another topic deep after free surface needs credits (no 2nd free LLM).
+                if profile.get("free_deep_answer_used"):
+                    if get_credit_balance(profile) <= 0:
+                        if profile.get("gate_suppressed_session"):
+                            profile["chosen_topic"] = topic
+                            label = TOPIC_LABELS.get(topic, topic)
+                            return await self._handle_followup_with_question(
+                                data,
+                                profile,
+                                phone_number,
+                                question=f"Deep reading on {label}.",
+                            )
+                        profile["chosen_topic"] = topic
+                        return _emit_door_gate(
+                            data, profile, phone_number, pending=f"topic:{topic}"
+                        )
+                    profile["chosen_topic"] = topic
+                    label = TOPIC_LABELS.get(topic, topic)
+                    return await self._handle_followup_with_question(
+                        data,
+                        profile,
+                        phone_number,
+                        question=f"Deep directive on {label} — what should I focus on now?",
+                    )
                 if not claim_beat_transition(
                     profile,
                     expected_beats=(BEAT_AWAITING_TOPIC,),
@@ -937,8 +1209,16 @@ class SamaraReadingAgent(Processor):
         *,
         confirm_signal: str,
     ) -> dict:
-        if dated_anchors_available(profile.get("chart_json")):
+        chart = profile.get("chart_json")
+        if dated_anchors_available(chart) and beat2a_quality_points(chart):
             return await self._send_beat2a(data, profile, phone_number, inbound_id)
+        # Skip weak/fortune-cookie 2a — undated Beat 2 or topic if no dated material
+        if dated_anchors_available(chart) and not beat2a_quality_points(chart):
+            # Still have dated ladder via 2b if TPs exist without age quality
+            if next_turning_point(profile, chart):
+                return await self._send_beat2b(
+                    data, profile, phone_number, inbound_id, alt=False
+                )
         return await self._send_beat2(
             data, profile, phone_number, inbound_id, confirm_signal=confirm_signal
         )
@@ -999,14 +1279,11 @@ class SamaraReadingAgent(Processor):
         chart = profile.get("chart_json")
         now_ctx = _now_context(chart)
         lang = _lang(profile)
-        themes = [
-            {
-                "theme_en": p.get("theme_en"),
-                "theme_hi": p.get("theme_hi"),
-            }
-            for p in (chart or {}).get("turning_points") or []
-            if isinstance(p, dict)
-        ]
+        themes = beat2a_quality_points(chart)
+        if not themes:
+            return await self._send_beat2(
+                data, profile, phone_number, inbound_id, confirm_signal="soft"
+            )
         instruction = SAMARA_BEAT2A_THEME_PROMPT.format(
             user_name=profile.get("username") or "dost",
             user_language=lang,
@@ -1196,6 +1473,9 @@ class SamaraReadingAgent(Processor):
             topic_label=label,
             chat_history_snippet=history_snippet,
             confirmed_events_json=_confirmed_events_json(profile),
+            turning_points_json=json.dumps(
+                (chart or {}).get("turning_points") or [], ensure_ascii=False
+            ),
         )
         try:
             text = await self._llm(
@@ -1218,6 +1498,8 @@ class SamaraReadingAgent(Processor):
         profile["open_loop_summary"] = text[-400:] if text else ""
         profile["conversation_beat"] = BEAT_POST_FREE_DEEP
         emit_funnel_event("free_deep_answer_sent", phone_number=phone_number)
+        # Complete demo — no cliff QR; do not set bot_asked_question
+        clear_bot_asked_question(profile)
         data["bot_response"] = text_responses(text)
         return data
 
@@ -1254,6 +1536,10 @@ class SamaraReadingAgent(Processor):
     async def _resume_open_loop(
         self, data: dict, profile: dict, phone_number: str
     ) -> dict:
+        if _is_post_gate_locked(profile):
+            return _emit_warm_paywall(
+                data, profile, phone_number, pending="continue"
+            )
         loop = (profile.get("open_loop_summary") or "").strip()
         topic = profile.get("chosen_topic")
         if loop and topic:
@@ -1317,7 +1603,7 @@ class SamaraReadingAgent(Processor):
                     "type": "cta_url",
                     "text": (
                         f"Click below to complete your payment of ₹{amount_display} "
-                        f"for Samara credits (10 questions)."
+                        f"for Samara — 10 deep chart answers."
                     ),
                     "display_text": "Pay Now",
                     "url": result["short_url"],
@@ -1452,12 +1738,133 @@ class SamaraReadingAgent(Processor):
         data["bot_response"] = [_language_quickreply_response()]
         return data
 
+    async def _handle_solicited_reply(
+        self,
+        data: dict,
+        profile: dict,
+        phone_number: str,
+        reply_text: str,
+    ) -> dict:
+        """Answer a reply to Samara's own question — free, no debit, no gate."""
+        ctx = (profile.get("bot_question_context") or "").strip()
+        question = (
+            f"The user is answering your previous question.\n"
+            f"Your question context: {ctx}\n"
+            f"Their reply: {reply_text}\n"
+            f"Give a complete, chart-grounded answer. Do NOT ask another "
+            f"withholding question. Do NOT mention credits or paywall."
+        )
+        clear_bot_asked_question(profile)
+        # Never treat as consuming free deep / credits
+        result = await deliver_paid_deep_answer(
+            profile=profile,
+            phone_number=phone_number,
+            question=question,
+            debit=False,
+        )
+        if not result:
+            data["bot_response"] = [{"type": "text", "text": ERROR_TEXT}]
+            return data
+        text, _ = result
+        responses = text_responses(text)
+        # Mark only if THIS answer itself asks again (rare; RULE 6 discourages)
+        joined = "\n".join(r.get("text", "") for r in responses if r.get("type") == "text")
+        mark_bot_asked_question(profile, joined, context=joined)
+        data["bot_response"] = responses
+        return data
+
+    def _enter_trust_recovery(
+        self, data: dict, profile: dict, phone_number: str
+    ) -> dict:
+        """Honest miss — gate stays closed. Cap 2 attempts then suppress gate."""
+        attempts = int(profile.get("trust_recovery_attempts") or 0)
+        if attempts >= 2:
+            profile["gate_suppressed_session"] = True
+            profile["in_trust_recovery"] = False
+            emit_funnel_event("trust_recovery_failed", phone_number=phone_number)
+            mark_beat_send(profile, BEAT_AWAITING_TOPIC)
+            lang = _lang(profile)
+            data["bot_response"] = [
+                {
+                    "type": "text",
+                    "text": (
+                        "Let's keep it simple — pick an area below and I'll "
+                        "read what I can, no pressure."
+                        if lang == "english"
+                        else "Simple rakhte hain — neeche area choose kariye, "
+                        "main jo padh sakti hoon bataungi, bina pressure."
+                    ),
+                },
+                topic_picker_buttons(lang=lang),
+            ]
+            return data
+
+        profile["trust_recovery_attempts"] = attempts + 1
+        profile["in_trust_recovery"] = True
+        profile["bot_asked_question"] = True
+        profile["bot_question_context"] = "trust_recovery_what_matters"
+        mark_beat_send(profile, BEAT_TRUST_RECOVERY)
+        emit_funnel_event("trust_recovery_entered", phone_number=phone_number)
+        lang = _lang(profile)
+        prompt = (
+            "I don't think I've read you properly yet. Let me try differently — "
+            "what matters most to you right now?"
+            if lang == "english"
+            else "Lagta hai main aapko theek se nahi pakad payi. Ek baat batayein — "
+            "abhi aapke liye sabse zaroori kya hai?"
+        )
+        data["bot_response"] = [{"type": "text", "text": prompt}]
+        return data
+
+    async def _handle_trust_recovery_reply(
+        self, data: dict, profile: dict, phone_number: str, reply: str
+    ) -> dict:
+        clear_bot_asked_question(profile)
+        chart = profile.get("chart_json") or {}
+        tps = json.dumps(chart.get("turning_points") or [], ensure_ascii=False)
+        question = (
+            f"Trust recovery. User said what matters: {reply}\n"
+            f"Give ONE specific chart-grounded response using strongest "
+            f"turning_points / dasha material:\n{tps}\n"
+            f"Be concrete. No paywall. No fear."
+        )
+        result = await deliver_paid_deep_answer(
+            profile=profile,
+            phone_number=phone_number,
+            question=question,
+            debit=False,
+        )
+        profile["in_trust_recovery"] = False
+        if not result:
+            emit_funnel_event("trust_recovery_failed", phone_number=phone_number)
+            data["bot_response"] = [{"type": "text", "text": ERROR_TEXT}]
+            return data
+        text, _ = result
+        bump_trust(profile, 2)
+        emit_funnel_event("trust_recovery_succeeded", phone_number=phone_number)
+        mark_beat_send(profile, BEAT_POST_FREE_DEEP)
+        # Gate still closed while trust was low; free_deep may already be set
+        data["bot_response"] = text_responses(text)
+        return data
+
     async def _handle_followup(
         self, data: dict, profile: dict, phone_number: str
     ) -> dict:
         question = ""
         if messages := data.get("messages"):
             question = ((messages.get("text") or {}).get("body") or "").strip()
+        return await self._handle_followup_with_question(
+            data, profile, phone_number, question=question
+        )
+
+    async def _handle_followup_with_question(
+        self,
+        data: dict,
+        profile: dict,
+        phone_number: str,
+        *,
+        question: str,
+    ) -> dict:
         if not question:
             data["bot_response"] = [
                 {
@@ -1466,6 +1873,21 @@ class SamaraReadingAgent(Processor):
                 }
             ]
             return data
+
+        # Gate ON: only via single decide_gate_action (never on solicited).
+        if profile.get("bot_asked_question"):
+            return await self._handle_solicited_reply(
+                data, profile, phone_number, question
+            )
+
+        action = decide_gate_action(
+            profile,
+            amount_inr=_payment_amount_inr(),
+        )
+        if action.kind == "door":
+            return _emit_door_gate(
+                data, profile, phone_number, pending=question, body=action.body
+            )
 
         async def _summary_llm(instruction: str, user_content: str) -> str:
             return await self._llm(
@@ -1481,18 +1903,6 @@ class SamaraReadingAgent(Processor):
             profile, classify_fn=_summary_llm
         )
 
-        # Gate ON: free deep used + zero balance → paywall (not before).
-        if profile.get("free_deep_answer_used") and get_credit_balance(profile) <= 0:
-            profile["pending_deep_question"] = question
-            emit_funnel_event("gate_shown", phone_number=phone_number)
-            body = (
-                PAYWALL_TEXT_EN
-                if _lang(profile) == "english"
-                else PAYWALL_TEXT_HI
-            )
-            data["bot_response"] = [paywall_buttons(lang=_lang(profile), body=body)]
-            return data
-
         # Daily generation cap (distress already handled above)
         if self._enforce_daily_cap(data, profile, phone_number):
             return data
@@ -1507,27 +1917,62 @@ class SamaraReadingAgent(Processor):
                     topic_picker_buttons(lang=_lang(profile)),
                 ]
                 return data
-            if get_credit_balance(profile) <= 0:
-                profile["pending_deep_question"] = question
-                emit_funnel_event("gate_shown", phone_number=phone_number)
-                body = PAYWALL_TEXT_EN if _lang(profile) == "english" else PAYWALL_TEXT_HI
-                data["bot_response"] = [paywall_buttons(lang=_lang(profile), body=body)]
-                return data
 
+        should_debit = (
+            profile.get("free_deep_answer_used") is True
+            and not profile.get("gate_suppressed_session")
+            and not profile.get("in_trust_recovery")
+        )
         result = await deliver_paid_deep_answer(
             profile=profile,
             phone_number=phone_number,
             question=question,
-            debit=profile.get("free_deep_answer_used") is True,
+            debit=should_debit,
         )
         if not result:
             data["bot_response"] = [{"type": "text", "text": ERROR_TEXT}]
             return data
         text, _ = result
         responses = text_responses(text)
-        upsell = _post_debit_upsell(profile, phone_number)
-        if upsell:
-            responses.extend(upsell)
+        mark_bot_asked_question(profile, text, context=text)
+
+        # Single post-answer gate decision (never stack with meter copy)
+        upsell_action = decide_gate_action(
+            profile, amount_inr=_payment_amount_inr()
+        )
+        if should_debit and upsell_action.kind == "door":
+            emit_funnel_event("top_up_offered", phone_number=phone_number)
+            responses.append(
+                paywall_buttons(
+                    lang=_lang(profile),
+                    body=upsell_action.body or door_gate_body(
+                        profile, amount_inr=_payment_amount_inr()
+                    ),
+                    amount_inr=_payment_amount_inr(),
+                )
+            )
+        elif should_debit:
+            bal = get_credit_balance(profile)
+            lang = _lang(profile)
+            if bal == 2 and not profile.get("second_pack_offered_session"):
+                profile["second_pack_offered_session"] = True
+                emit_funnel_event("second_pack_offered", phone_number=phone_number)
+                # Soft note only — not a second gate QR
+                note = (
+                    "You have 2 deep answers left in this pack."
+                    if lang == "english"
+                    else "Pack mein 2 deep answers bachi hain."
+                )
+                responses.append({"type": "text", "text": note})
+            elif bal > 0:
+                footer = (
+                    f"✦ {bal} deep chart answer{'s' if bal != 1 else ''} left."
+                    if lang == "english"
+                    else f"✦ Pack mein {bal} deep chart answer bachi hain."
+                )
+                responses.append({"type": "text", "text": footer})
+
+        assert count_gate_messages(responses) <= 1
         data["bot_response"] = responses
         return data
 
@@ -1561,6 +2006,7 @@ class SamaraReadingAgent(Processor):
         self, data: dict, profile: dict, phone_number: str
     ) -> dict:
         profile["paywall_deferred"] = True
+        profile["paywall_pitch_suppressed"] = True
         profile["nudge_scheduled_at"] = int(datetime.now(timezone.utc).timestamp()) + 86400
         profile["nudge_sent"] = False
         profile["pending_deep_question"] = profile.get("pending_deep_question")
@@ -1577,24 +2023,20 @@ class SamaraReadingAgent(Processor):
 
 
 TOP_UP_TEXT_HI = (
-    "Aapke credits khatam ho gaye hain 🌙 "
-    "Aage ke sawaal ke liye naye credits le sakte hain — "
-    "neeche 'Pay Now' se unlock kijiye, ya baad mein poochiye."
+    "Woh jawab poora hai 🌙 "
+    "Agla clear window aur poori tasveer ke liye jab ready ho unlock kariye."
 )
 TOP_UP_TEXT_EN = (
-    "You've used your last credit 🌙 "
-    "You can get more credits to keep asking — "
-    "tap Pay Now below, or come back later."
+    "That answer stands on its own 🌙 "
+    "When you're ready, unlock for the next clear window and full picture."
 )
 SECOND_PACK_TEXT_HI = (
-    "Aapke paas abhi 2 credits bache hain 🌙 "
-    "Agar aur sawaal poochne hain, agle pack ke liye 'Pay Now' dabaiye — "
-    "bilkul koi rush nahi."
+    "Pack mein 2 deep answers bachi hain 🌙 "
+    "Thread jaari rakhna ho toh ready hone par unlock kariye — koi rush nahi."
 )
 SECOND_PACK_TEXT_EN = (
-    "You have 2 credits remaining 🌙 "
-    "If you'd like to keep going, tap Pay Now for the next pack — "
-    "no rush at all."
+    "You have 2 deep answers left 🌙 "
+    "Unlock when you want to keep this thread going — no rush."
 )
 TIMING_REDIRECT_HI = (
     "Yeh sawaal time-related lagta hai ✨ "
