@@ -419,6 +419,30 @@ export default function UsersPage() {
     }
   }
 
+  const refreshActiveUser = (phone) => {
+    const p = phone || activePhone
+    if (!p) return
+    getUserByPhone(p)
+      .then((data) => setUserMap((prev) => ({ ...prev, [p]: data })))
+      .catch(() => {})
+    fetchUsers()
+  }
+
+  const handleUserDeleted = (phone) => {
+    const p = phone || activePhone
+    setUserMap((prev) => {
+      const next = { ...prev }
+      delete next[p]
+      return next
+    })
+    if (activePhone === p) {
+      setActivePhone(null)
+      setShowProfile(false)
+    }
+    fetchUsers()
+    toast.success('User deleted from DB')
+  }
+
   const handleSendMessage = async () => {
     const msg = agentInput.trim()
     if (!msg || sendingMessage) return
@@ -526,6 +550,8 @@ export default function UsersPage() {
           <UserProfilePanel
             userData={activeUserData}
             onClose={() => setShowProfile(false)}
+            onUserUpdated={refreshActiveUser}
+            onUserDeleted={handleUserDeleted}
           />
         )}
 
@@ -537,6 +563,8 @@ export default function UsersPage() {
             <UserProfilePanel
               userData={activeUserData}
               onClose={() => setShowProfile(false)}
+              onUserUpdated={refreshActiveUser}
+              onUserDeleted={handleUserDeleted}
             />
           )}
         </SheetContent>

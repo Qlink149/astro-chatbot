@@ -1,7 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from kisna_chatbot.database.collections import chat_messages, message_traces, users
+from kisna_chatbot.database.collections import (
+    ai_usage_logs,
+    chat_messages,
+    message_traces,
+    payments,
+    processed_inbound_messages,
+    ratings,
+    users,
+)
 from kisna_chatbot.database.db_utils import get_all_users, get_user_by_phone, search_users
+from kisna_chatbot.payments.credit_ledger import get_credit_balance, grant_credits
 from kisna_chatbot.routes.dependencies.system_dependencies import verify_token
 from kisna_chatbot.utils.logger_config import logger
 
@@ -184,4 +193,119 @@ def delete_user_chat(
             "Failed to delete user chat", extra={"phone_number": phone_number}
         )
         raise HTTPException(status_code=500, detail="Failed to delete user chat")
+
+
+@router.post("/{phone_number}/grant-credits")
+def grant_user_credits(
+    phone_number: str,
+    amount: int = Query(10, ge=1, le=100, description="Credits to grant"),
+    client_id: str = Query("samara", description="Tenant client id"),
+):
+    """Admin bypass: grant credits so the user can continue without Razorpay.
+
+    Also clears session paywall suppress flags so the next deep question works.
+    """
+    try:
+        query = {"phone_number": phone_number, "client_id": client_id}
+        user = users.find_one(query)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        updated = grant_credits(
+            phone_number=phone_number,
+            client_id=client_id,
+            amount=int(amount),
+            source="admin_bypass",
+            payment_id=None,
+        )
+        if not updated:
+            raise HTTPException(status_code=500, detail="Failed to grant credits")
+
+        users.update_one(
+            query,
+            {
+                "$set": {
+                    "paywall_pitch_suppressed": False,
+                    "paywall_deferred": False,
+                    "gate_suppressed_session": False,
+                }
+            },
+        )
+        refreshed = users.find_one(query) or updated
+        balance = get_credit_balance(refreshed)
+
+        logger.info(
+            "Admin credit bypass granted",
+            extra={
+                "phone_number": phone_number,
+                "client_id": client_id,
+                "amount": amount,
+                "balance": balance,
+            },
+        )
+        return {
+            "status": "ok",
+            "phone_number": phone_number,
+            "client_id": client_id,
+            "granted": int(amount),
+            "credits": balance,
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "Failed to grant credits", extra={"phone_number": phone_number}
+        )
+        raise HTTPException(status_code=500, detail="Failed to grant credits")
+
+
+@router.post("/{phone_number}/delete")
+def delete_user_fully(
+    phone_number: str,
+    client_id: str = Query("samara", description="Tenant client id"),
+):
+    """Hard-delete this user and related rows — fresh WhatsApp start next time."""
+    try:
+        query = {"phone_number": phone_number, "client_id": client_id}
+        user = users.find_one(query)
+        if not user:
+            # Still wipe related collections in case of orphans
+            pass
+
+        deleted = {
+            "users": users.delete_many(query).deleted_count,
+            "chat_messages": chat_messages.delete_many(query).deleted_count,
+            "message_traces": message_traces.delete_many(query).deleted_count,
+            "ai_usage_logs": ai_usage_logs.delete_many(query).deleted_count,
+            "processed_inbound_messages": processed_inbound_messages.delete_many(
+                query
+            ).deleted_count,
+            "payments": payments.delete_many(query).deleted_count,
+            "ratings": ratings.delete_many(query).deleted_count,
+        }
+
+        if deleted["users"] == 0 and user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        logger.info(
+            "Samara user hard-deleted",
+            extra={
+                "phone_number": phone_number,
+                "client_id": client_id,
+                **{f"deleted_{k}": v for k, v in deleted.items()},
+            },
+        )
+        return {
+            "status": "ok",
+            "phone_number": phone_number,
+            "client_id": client_id,
+            "deleted": deleted,
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "Failed to delete user", extra={"phone_number": phone_number}
+        )
+        raise HTTPException(status_code=500, detail="Failed to delete user")
 

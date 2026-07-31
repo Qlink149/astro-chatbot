@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { User, Clock, Star, Coins, CalendarDays, X, CheckCircle2, XCircle, RotateCcw, Loader2, Trash2 } from 'lucide-react'
+import { User, Clock, Star, Coins, CalendarDays, X, CheckCircle2, XCircle, RotateCcw, Loader2, Trash2, Unlock } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { resetUser, deleteUserChat } from '@/lib/api'
+import { resetUser, deleteUserChat, grantUserCredits, deleteUserFully } from '@/lib/api'
 import { safeFormatDate } from './utils'
 
 function Row({ label, value, badge, mono }) {
@@ -30,22 +30,58 @@ function Panel({ icon: Icon, title, children, testId }) {
   )
 }
 
-export default function UserProfilePanel({ userData, onClose }) {
+function ActionButton({ state, error, idleLabel, confirmLabel, loadingLabel, doneLabel, onClick, testId, variant = 'destructive', className = '' }) {
+  return (
+    <Button
+      variant={variant}
+      size="sm"
+      className={`w-full ${className}`}
+      onClick={onClick}
+      disabled={state === 'loading' || state === 'done'}
+      data-testid={testId}
+    >
+      {state === 'loading' && (
+        <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> {loadingLabel}</>
+      )}
+      {state === 'done' && (
+        <><CheckCircle2 className="h-3.5 w-3.5 mr-1.5" /> {doneLabel}</>
+      )}
+      {state === 'confirm' && (
+        <>{confirmLabel}</>
+      )}
+      {state === 'error' && (
+        <><XCircle className="h-3.5 w-3.5 mr-1.5" /> {error || 'Retry'}</>
+      )}
+      {state === 'idle' && idleLabel}
+    </Button>
+  )
+}
+
+export default function UserProfilePanel({ userData, onClose, onUserUpdated, onUserDeleted }) {
   const birth = userData.birth_details || null
   const chart = userData.chart_json || null
   const chartType = chart?.meta?.chart_type
   const credits = userData.credits ?? 0
   const freeReadingUsed = Boolean(userData.free_reading_used)
 
-  const [resetState, setResetState] = useState('idle') // idle | confirm | loading | done | error
+  const [resetState, setResetState] = useState('idle')
   const [resetError, setResetError] = useState(null)
   const [chatState, setChatState] = useState('idle')
   const [chatError, setChatError] = useState(null)
+  const [bypassState, setBypassState] = useState('idle')
+  const [bypassError, setBypassError] = useState(null)
+  const [bypassBalance, setBypassBalance] = useState(null)
+  const [deleteState, setDeleteState] = useState('idle')
+  const [deleteError, setDeleteError] = useState(null)
+
+  const armConfirm = (setState) => {
+    setState('confirm')
+    setTimeout(() => setState((s) => (s === 'confirm' ? 'idle' : s)), 5000)
+  }
 
   const handleReset = async () => {
     if (resetState === 'idle') {
-      setResetState('confirm')
-      setTimeout(() => setResetState((s) => (s === 'confirm' ? 'idle' : s)), 5000)
+      armConfirm(setResetState)
       return
     }
     if (resetState !== 'confirm') return
@@ -54,6 +90,7 @@ export default function UserProfilePanel({ userData, onClose }) {
     try {
       await resetUser(userData.phone_number)
       setResetState('done')
+      onUserUpdated?.(userData.phone_number)
       setTimeout(() => onClose?.(), 800)
     } catch (err) {
       setResetError(err?.message || 'Reset failed')
@@ -64,8 +101,7 @@ export default function UserProfilePanel({ userData, onClose }) {
 
   const handleDeleteChat = async () => {
     if (chatState === 'idle') {
-      setChatState('confirm')
-      setTimeout(() => setChatState((s) => (s === 'confirm' ? 'idle' : s)), 5000)
+      armConfirm(setChatState)
       return
     }
     if (chatState !== 'confirm') return
@@ -74,11 +110,53 @@ export default function UserProfilePanel({ userData, onClose }) {
     try {
       await deleteUserChat(userData.phone_number)
       setChatState('done')
+      onUserUpdated?.(userData.phone_number)
       setTimeout(() => onClose?.(), 800)
     } catch (err) {
       setChatError(err?.message || 'Delete failed')
       setChatState('error')
       setTimeout(() => setChatState('idle'), 3000)
+    }
+  }
+
+  const handleBypass = async () => {
+    if (bypassState === 'idle') {
+      armConfirm(setBypassState)
+      return
+    }
+    if (bypassState !== 'confirm') return
+    setBypassState('loading')
+    setBypassError(null)
+    try {
+      const res = await grantUserCredits(userData.phone_number, 10)
+      setBypassBalance(res?.credits ?? null)
+      setBypassState('done')
+      onUserUpdated?.(userData.phone_number)
+      setTimeout(() => setBypassState('idle'), 2500)
+    } catch (err) {
+      setBypassError(err?.message || 'Bypass failed')
+      setBypassState('error')
+      setTimeout(() => setBypassState('idle'), 3000)
+    }
+  }
+
+  const handleDeleteUser = async () => {
+    if (deleteState === 'idle') {
+      armConfirm(setDeleteState)
+      return
+    }
+    if (deleteState !== 'confirm') return
+    setDeleteState('loading')
+    setDeleteError(null)
+    try {
+      await deleteUserFully(userData.phone_number)
+      setDeleteState('done')
+      onUserDeleted?.(userData.phone_number)
+      setTimeout(() => onClose?.(), 600)
+    } catch (err) {
+      setDeleteError(err?.message || 'Delete failed')
+      setDeleteState('error')
+      setTimeout(() => setDeleteState('idle'), 3000)
     }
   }
 
@@ -92,7 +170,6 @@ export default function UserProfilePanel({ userData, onClose }) {
       </div>
 
       <div className="flex-1 overflow-y-auto min-h-0 overscroll-y-contain p-4 space-y-6">
-        {/* Avatar & Name */}
         <div className="flex flex-col items-center text-center pb-4 border-b">
           <div
             className="h-20 w-20 rounded-full flex items-center justify-center mb-3 border-2"
@@ -113,7 +190,6 @@ export default function UserProfilePanel({ userData, onClose }) {
           )}
         </div>
 
-        {/* Birth details */}
         <Panel icon={CalendarDays} title="Birth Details" testId="birth-details-panel">
           {birth ? (
             <>
@@ -131,7 +207,6 @@ export default function UserProfilePanel({ userData, onClose }) {
           )}
         </Panel>
 
-        {/* Chart summary — display only, never recomputed here */}
         <Panel icon={Star} title="Chart Summary" testId="chart-summary-panel">
           {chart ? (
             <>
@@ -154,9 +229,8 @@ export default function UserProfilePanel({ userData, onClose }) {
           )}
         </Panel>
 
-        {/* Credits */}
         <Panel icon={Coins} title="Credits" testId="credits-panel">
-          <Row label="Credits balance" value={String(credits)} badge />
+          <Row label="Credits balance" value={String(bypassBalance ?? credits)} badge />
           <div className="flex items-center justify-between gap-2">
             <span className="text-xs text-muted-foreground">Free reading</span>
             {freeReadingUsed ? (
@@ -170,7 +244,7 @@ export default function UserProfilePanel({ userData, onClose }) {
             )}
           </div>
         </Panel>
-        {/* Danger zone — reset user for re-testing */}
+
         <div className="pt-2" data-testid="reset-user-block">
           <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-2 flex items-center gap-1">
             <RotateCcw className="h-3 w-3" /> Testing tools
@@ -183,59 +257,62 @@ export default function UserProfilePanel({ userData, onClose }) {
             }}
           >
             <p className="text-xs text-muted-foreground leading-snug">
-              Testing helpers for re-running the WhatsApp flow on this number.
+              Testing helpers for this WhatsApp number.
             </p>
-            <Button
-              variant="destructive"
-              size="sm"
-              className="w-full"
+
+            <ActionButton
+              state={bypassState}
+              error={bypassError}
+              testId="bypass-paywall-btn"
+              variant="default"
+              className="bg-emerald-700 hover:bg-emerald-800 text-white"
+              idleLabel={<><Unlock className="h-3.5 w-3.5 mr-1.5" /> Bypass paywall (+10 credits)</>}
+              confirmLabel={<><Unlock className="h-3.5 w-3.5 mr-1.5" /> Click again to grant 10</>}
+              loadingLabel="Granting…"
+              doneLabel={bypassBalance != null ? `Done — ${bypassBalance} credits` : 'Credits granted'}
+              onClick={handleBypass}
+            />
+
+            <ActionButton
+              state={resetState}
+              error={resetError}
+              testId="reset-user-btn"
+              idleLabel={<><RotateCcw className="h-3.5 w-3.5 mr-1.5" /> Reset this user</>}
+              confirmLabel={<><RotateCcw className="h-3.5 w-3.5 mr-1.5" /> Click again to confirm</>}
+              loadingLabel="Resetting…"
+              doneLabel="Reset complete"
               onClick={handleReset}
-              disabled={resetState === 'loading' || resetState === 'done'}
-              data-testid="reset-user-btn"
-            >
-              {resetState === 'loading' && (
-                <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> Resetting…</>
-              )}
-              {resetState === 'done' && (
-                <><CheckCircle2 className="h-3.5 w-3.5 mr-1.5" /> Reset complete</>
-              )}
-              {resetState === 'confirm' && (
-                <><RotateCcw className="h-3.5 w-3.5 mr-1.5" /> Click again to confirm</>
-              )}
-              {resetState === 'error' && (
-                <><XCircle className="h-3.5 w-3.5 mr-1.5" /> {resetError || 'Retry'}</>
-              )}
-              {resetState === 'idle' && (
-                <><RotateCcw className="h-3.5 w-3.5 mr-1.5" /> Reset this user</>
-              )}
-            </Button>
-            <Button
+            />
+
+            <ActionButton
+              state={chatState}
+              error={chatError}
+              testId="delete-chat-btn"
               variant="outline"
-              size="sm"
-              className="w-full border-red-300 text-red-700 hover:bg-red-50"
+              className="border-red-300 text-red-700 hover:bg-red-50"
+              idleLabel={<><Trash2 className="h-3.5 w-3.5 mr-1.5" /> Delete chat only</>}
+              confirmLabel={<><Trash2 className="h-3.5 w-3.5 mr-1.5" /> Click again to confirm</>}
+              loadingLabel="Deleting chat…"
+              doneLabel="Chat deleted"
               onClick={handleDeleteChat}
-              disabled={chatState === 'loading' || chatState === 'done'}
-              data-testid="delete-chat-btn"
-            >
-              {chatState === 'loading' && (
-                <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> Deleting chat…</>
-              )}
-              {chatState === 'done' && (
-                <><CheckCircle2 className="h-3.5 w-3.5 mr-1.5" /> Chat deleted</>
-              )}
-              {chatState === 'confirm' && (
-                <><Trash2 className="h-3.5 w-3.5 mr-1.5" /> Click again to confirm</>
-              )}
-              {chatState === 'error' && (
-                <><XCircle className="h-3.5 w-3.5 mr-1.5" /> {chatError || 'Retry'}</>
-              )}
-              {chatState === 'idle' && (
-                <><Trash2 className="h-3.5 w-3.5 mr-1.5" /> Delete chat only</>
-              )}
-            </Button>
+            />
+
+            <ActionButton
+              state={deleteState}
+              error={deleteError}
+              testId="delete-user-btn"
+              idleLabel={<><Trash2 className="h-3.5 w-3.5 mr-1.5" /> Delete user from DB</>}
+              confirmLabel={<><Trash2 className="h-3.5 w-3.5 mr-1.5" /> Click again — permanent</>}
+              loadingLabel="Deleting user…"
+              doneLabel="User deleted"
+              onClick={handleDeleteUser}
+            />
+
             <p className="text-[10px] text-muted-foreground leading-tight pt-1">
+              <strong>Bypass</strong> adds 10 credits (skip Razorpay).<br />
               <strong>Reset</strong> wipes chart, birth details, language & chat.<br />
-              <strong>Delete chat</strong> keeps chart & profile, wipes only the conversation.
+              <strong>Delete chat</strong> keeps profile, wipes conversation only.<br />
+              <strong>Delete user</strong> removes everything — next WA message is fresh.
             </p>
           </div>
         </div>

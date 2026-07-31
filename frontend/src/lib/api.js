@@ -116,6 +116,19 @@ export const deleteUserChat = (phone) => {
   return api(`/system/user/${phone}/delete-chat?${q.toString()}`, 'POST')
 }
 
+/** Admin bypass — grant credits without Razorpay (default 10). */
+export const grantUserCredits = (phone, amount = 10) => {
+  const q = withClientId()
+  q.set('amount', String(amount))
+  return api(`/system/user/${phone}/grant-credits?${q.toString()}`, 'POST')
+}
+
+/** Hard-delete user + related Mongo rows for a fresh WhatsApp start. */
+export const deleteUserFully = (phone) => {
+  const q = withClientId()
+  return api(`/system/user/${phone}/delete?${q.toString()}`, 'POST')
+}
+
 export const getChatHistory = (phone, { before, beforeId, limit = 50 } = {}) => {
   const q = withClientId()
   q.set('limit', String(limit))
