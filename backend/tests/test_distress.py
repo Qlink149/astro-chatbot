@@ -252,10 +252,9 @@ def test_distress_classifier_uses_haiku_not_sonnet():
             return json.dumps({"distress": True, "self_harm": False})
 
         with patch.object(mod, "complete_chat", new=AsyncMock(side_effect=fake_complete)):
-            with patch.object(
-                mod,
-                "_sonnet_models",
-                return_value=("claude-sonnet-test", "claude-haiku-test"),
+            with patch(
+                "kisna_chatbot.ai.samara_models.samara_model_for",
+                return_value=("claude-haiku-test", None),
             ):
                 data = {
                     "client_id": "samara",

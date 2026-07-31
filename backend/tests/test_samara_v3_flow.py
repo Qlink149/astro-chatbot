@@ -470,6 +470,7 @@ def test_returning_greeting_shows_continuity_menu():
             "free_deep_answer_used": True,
             "user_language": "hindi",
             "conversation_beat": BEAT_POST_FREE_DEEP,
+            "chosen_topic": "career",
         }
         data = {
             "client_id": "samara",
@@ -481,6 +482,9 @@ def test_returning_greeting_shows_continuity_menu():
         assert out["bot_response"][0]["type"] == "quickreply"
         titles = [o["title"] for o in out["bot_response"][0]["options"]]
         assert any("Wahi" in t or "baat" in t for t in titles)
+        body = out["bot_response"][0]["text"].lower()
+        assert "career" in body
+        assert "wapas" in body or "pichli" in body
 
     _run(go())
 

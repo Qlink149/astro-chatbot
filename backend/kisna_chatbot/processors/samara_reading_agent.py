@@ -48,6 +48,10 @@ from kisna_chatbot.utils.distress import (
     extract_inbound_text,
 )
 from kisna_chatbot.utils.logger_config import logger
+from kisna_chatbot.utils.nasa_copy_guard import (
+    APPROVED_NASA_LINEAGE,
+    sanitize_nasa_endorsement,
+)
 from kisna_chatbot.utils.samara_beats import (
     ACK_RE_OFFER_TEXT_EN,
     ACK_RE_OFFER_TEXT_HI,
@@ -59,6 +63,7 @@ from kisna_chatbot.utils.samara_beats import (
     BEAT_2B_AWAITING_CONFIRM,
     BEAT_2C_AWAITING_DETAIL,
     BEAT_AWAITING_LANGUAGE,
+    BEAT_AWAITING_NAME,
     BEAT_AWAITING_TOPIC,
     BEAT_POST_FREE_DEEP,
     BEAT_RETURNING_MENU,
@@ -74,9 +79,11 @@ from kisna_chatbot.utils.samara_beats import (
     dated_anchors_available,
     detect_language_switch,
     detect_restart_intent,
+    display_user_name,
     inbound_message_id,
     looks_like_greeting,
     mark_beat_send,
+    needs_conversational_name,
     next_turning_point,
     parse_beat1_confirm,
     parse_beat2_advance,
@@ -92,7 +99,10 @@ from kisna_chatbot.utils.samara_beats import (
     looks_like_broke_objection,
     relevant_dasha_slice,
     returning_menu_buttons,
+    soft_past_range_from_chart,
+    strip_exact_dates_from_beat1,
     text_responses,
+    topic_label_for,
     topic_picker_buttons,
     want_more_buttons,
 )
@@ -131,20 +141,29 @@ _TEXT_DATE_RE = re.compile(r"\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})\b")
 _TEXT_DATE_ISO_RE = re.compile(r"\b(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})\b")
 _TEXT_TIME_RE = re.compile(r"\b([01]?\d|2[0-3])[:.]([0-5]\d)\b")
 
+# First-time greeting. NASA line is DATA lineage only — never endorsement.
+# META ADS: ad review is stricter than in-chat. Do NOT reuse this NASA lineage
+# line verbatim in Meta ad creative without brand/legal review.
 GREETING_TEXT_HI = (
-    "Namaste 🙏 Main Samara hoon — aapki personal Vedic astrology guide, by Clara. ✨\n\n"
-    "Aapki asli janam kundli banane ke liye mujhe bas aapki birth details chahiye — "
-    "date, time aur place of birth. Neeche form khol kar share kar dijiye, "
-    "phir main aapke liye ek warm, personal reading likhungi. 🌙\n\n"
+    "Namaste, Samara by Clara mein swagat hai — aapki AI astrology guide, "
+    f"{APPROVED_NASA_LINEAGE}. "
+    "Isliye reading real sky se aati hai, generic horoscope se nahi.\n\n"
+    "Pehle birth details chahiye — date, time (agar time yaad na ho to form mein "
+    "'I don't know' choose kariye), aur place of birth. Time na pata ho to "
+    "Lagna aur precise house-based timing nahi milenge, phir bhi meaningful "
+    "reading possible hai. Neeche form kholiye. 🌙\n\n"
     "📝 Aapki details sirf aapki reading ke liye use hongi. "
     "Yeh reflection aur enjoyment ke liye hai — medical, legal ya financial advice nahi. "
     "Kabhi bhi 'delete my data' likh kar apna data hata sakte hain."
 )
 GREETING_TEXT_EN = (
-    "Namaste 🙏 I'm Samara — your personal Vedic astrology guide, by Clara. ✨\n\n"
-    "To build your real birth chart I just need your birth details — "
-    "date, time, and place. Open the form below to share them, "
-    "then I'll write a warm, personal reading for you. 🌙\n\n"
+    "Namaste, welcome to Samara by Clara — your AI astrology guide, "
+    f"{APPROVED_NASA_LINEAGE}. "
+    "So your reading comes from the real sky, not a generic horoscope.\n\n"
+    "First I need your birth details — date, time (choose 'I don't know' in the "
+    "form if you're unsure), and place of birth. If birth time is unknown, "
+    "Lagna/ascendant and precise house-based timing can't be given, but a "
+    "meaningful reading is still possible. Open the form below. 🌙\n\n"
     "📝 Your details are only used for your reading. "
     "This is for reflection and enjoyment — not medical, legal, or financial advice. "
     "You can type 'delete my data' anytime to remove your data."
@@ -153,13 +172,19 @@ GREETING_TEXT = GREETING_TEXT_HI
 
 NUDGE_TEXT_HI = (
     "Bas ek chhota sa step baaki hai ✨ — neeche form se apni birth details "
-    "(date, time, place) share kar dijiye, phir main aapki kundli padh kar reading dungi. 🙏"
+    "(date, time ya 'I don't know', place) share kar dijiye. Time na pata ho "
+    "to bhi meaningful reading possible hai — Lagna precise nahi hoga. 🙏"
 )
 NUDGE_TEXT_EN = (
     "Just one small step left ✨ — share your birth details "
-    "(date, time, place) in the form below, and I'll read your chart. 🙏"
+    "(date, time or 'I don't know', place) in the form below. "
+    "Unknown time still works — Lagna won't be exact, but a meaningful "
+    "reading is possible. 🙏"
 )
 NUDGE_TEXT = NUDGE_TEXT_HI
+
+NAME_ASK_TEXT_HI = "Aapko kya bulaun? 🌙"
+NAME_ASK_TEXT_EN = "What should I call you? 🌙"
 
 # First-gate / door — never meter consumption language as primary.
 PAYWALL_TEXT_HI = (
@@ -330,7 +355,24 @@ def _parse_birth_date(raw) -> tuple[int, int, int] | None:
         return None
 
 
+def _unknown_time_selected(flow_data: dict) -> bool:
+    """True when the Flow OptIn / legacy flag says birth time is unknown."""
+    raw = flow_data.get("unknown_time")
+    if raw is True:
+        return True
+    if isinstance(raw, (list, tuple)):
+        # WhatsApp OptIn often sends ["unknown_time"] when checked.
+        return any(str(x).strip().lower() in ("unknown_time", "true", "1") for x in raw)
+    if isinstance(raw, str):
+        return raw.strip().lower() in ("true", "1", "yes", "unknown_time", "on")
+    return False
+
+
 def _parse_birth_time(flow_data: dict) -> tuple[int, int] | None:
+    # Explicit "I don't know" → surya_kundli path (no fabricated noon time).
+    if _unknown_time_selected(flow_data):
+        return None
+
     raw_h_in = str(flow_data.get("birth_hour_input") or "").strip()
     raw_m_in = str(flow_data.get("birth_minute_input") or "").strip()
     raw_ampm = str(flow_data.get("birth_ampm") or "").strip().upper()
@@ -792,8 +834,10 @@ class SamaraReadingAgent(Processor):
                 if profile.get("user_language") == "english"
                 else NUDGE_TEXT_HI
             )
+            outbound = greet if is_new else nudge
+            outbound, _ = sanitize_nasa_endorsement(outbound)
             data["bot_response"] = [
-                {"type": "text", "text": greet if is_new else nudge},
+                {"type": "text", "text": outbound},
                 {"type": "flow", "flow": "birth_details"},
             ]
             return data
@@ -806,10 +850,18 @@ class SamaraReadingAgent(Processor):
             if lang:
                 profile["user_language"] = lang
                 emit_funnel_event("language_chosen", phone_number=phone_number)
-                return await self._send_beat1(data, profile, phone_number, inbound_id)
+                return await self._after_language_chosen(
+                    data, profile, phone_number, inbound_id
+                )
             mark_beat_send(profile, BEAT_AWAITING_LANGUAGE)
             data["bot_response"] = [_language_quickreply_response()]
             return data
+
+        # Conversational name capture (no form field) before Beat 1
+        if beat == BEAT_AWAITING_NAME:
+            return await self._handle_name_reply(
+                data, profile, phone_number, inbound_id, messages
+            )
 
         # Mid-intro beat handling
         if beat == BEAT_1_AWAITING_CONFIRM:
@@ -1085,10 +1137,16 @@ class SamaraReadingAgent(Processor):
             # Continuity menu on greetings; real questions go to follow-up
             if looks_like_greeting(text_body) or not text_body:
                 mark_beat_send(profile, BEAT_RETURNING_MENU, inbound_id)
+                lang = _lang(profile)
                 data["bot_response"] = [
                     returning_menu_buttons(
-                        lang=_lang(profile),
-                        name=profile.get("username") or "dost",
+                        lang=lang,
+                        name=display_user_name(profile),
+                        last_topic_label=topic_label_for(
+                            topic_key=profile.get("chosen_topic"),
+                            lang=lang,
+                        )
+                        or None,
                     )
                 ]
                 return data
@@ -1133,7 +1191,60 @@ class SamaraReadingAgent(Processor):
         }
         if fallback:
             kwargs["model_fallback"] = fallback
-        return await complete_chat(**kwargs)
+        text = await complete_chat(**kwargs)
+        clean, violated = sanitize_nasa_endorsement(text)
+        if violated:
+            logger.warning(
+                "nasa endorsement scrubbed from LLM output",
+                extra={
+                    "phone_number": phone_number,
+                    "agent": agent_display_name,
+                },
+            )
+        return clean
+
+    async def _after_language_chosen(
+        self,
+        data: dict,
+        profile: dict,
+        phone_number: str,
+        inbound_id: str,
+    ) -> dict:
+        if needs_conversational_name(profile):
+            lang = _lang(profile)
+            ask = NAME_ASK_TEXT_EN if lang == "english" else NAME_ASK_TEXT_HI
+            mark_beat_send(profile, BEAT_AWAITING_NAME, inbound_id)
+            data["bot_response"] = [{"type": "text", "text": ask}]
+            return data
+        return await self._send_beat1(data, profile, phone_number, inbound_id)
+
+    async def _handle_name_reply(
+        self,
+        data: dict,
+        profile: dict,
+        phone_number: str,
+        inbound_id: str,
+        messages: dict,
+    ) -> dict:
+        text_body = ""
+        if isinstance(messages, dict) and messages.get("type") == "text":
+            text_body = ((messages.get("text") or {}).get("body") or "").strip()
+        # Reject empty / language-button echoes; re-ask.
+        if not text_body or len(text_body) > 40:
+            lang = _lang(profile)
+            ask = NAME_ASK_TEXT_EN if lang == "english" else NAME_ASK_TEXT_HI
+            data["bot_response"] = [{"type": "text", "text": ask}]
+            return data
+        # Light clean — first token / short phrase only
+        name = re.sub(r"[^A-Za-z\u0900-\u097F\s.'-]", "", text_body).strip()
+        name = " ".join(name.split())[:30]
+        if not name or name.lower() in ("dost", "hi", "hello", "namaste"):
+            lang = _lang(profile)
+            ask = NAME_ASK_TEXT_EN if lang == "english" else NAME_ASK_TEXT_HI
+            data["bot_response"] = [{"type": "text", "text": ask}]
+            return data
+        profile["preferred_name"] = name
+        return await self._send_beat1(data, profile, phone_number, inbound_id)
 
     def _enforce_daily_cap(self, data: dict, profile: dict, phone_number: str) -> bool:
         """Return True and set bot_response if daily cap hit. Distress always allowed."""
@@ -1162,12 +1273,14 @@ class SamaraReadingAgent(Processor):
         chart = profile.get("chart_json")
         now_ctx = _now_context(chart)
         lang = _lang(profile)
+        soft_range = soft_past_range_from_chart(chart)
         instruction = SAMARA_BEAT1_IDENTITY_PROMPT.format(
             chart_json=json.dumps(chart, ensure_ascii=False),
-            user_name=profile.get("username") or "dost",
+            user_name=display_user_name(profile),
             user_language=lang,
             current_date=now_ctx["current_date"],
             current_age=now_ctx["current_age"],
+            soft_past_range_json=json.dumps(soft_range, ensure_ascii=False),
             confirmed_events_json=_confirmed_events_json(profile),
         )
         try:
@@ -1183,6 +1296,13 @@ class SamaraReadingAgent(Processor):
             logger.exception("Beat1 LLM failed", extra={"phone_number": phone_number})
             data["bot_response"] = [{"type": "text", "text": ERROR_TEXT}]
             return data
+
+        text, exact_hit = strip_exact_dates_from_beat1(text)
+        if exact_hit:
+            logger.warning(
+                "Beat1 exact calendar day stripped",
+                extra={"phone_number": phone_number},
+            )
 
         chunks = text_responses(text)
         # Attach confirm buttons to the last text chunk
@@ -1240,7 +1360,7 @@ class SamaraReadingAgent(Processor):
         instruction = SAMARA_BEAT2_PAST_PROMPT.format(
             chart_json=json.dumps(chart, ensure_ascii=False),
             relevant_dasha_json=json.dumps(relevant, ensure_ascii=False),
-            user_name=profile.get("username") or "dost",
+            user_name=display_user_name(profile),
             user_language=lang,
             current_date=now_ctx["current_date"],
             current_age=now_ctx["current_age"],
@@ -1285,7 +1405,7 @@ class SamaraReadingAgent(Processor):
                 data, profile, phone_number, inbound_id, confirm_signal="soft"
             )
         instruction = SAMARA_BEAT2A_THEME_PROMPT.format(
-            user_name=profile.get("username") or "dost",
+            user_name=display_user_name(profile),
             user_language=lang,
             current_date=now_ctx["current_date"],
             current_age=now_ctx["current_age"],
@@ -1358,7 +1478,7 @@ class SamaraReadingAgent(Processor):
         profile["beat2_pending_window"] = window
 
         instruction = SAMARA_BEAT2B_DATE_ASK_PROMPT.format(
-            user_name=profile.get("username") or "dost",
+            user_name=display_user_name(profile),
             user_language=lang,
             window_label_en=window.get("window_label_en") or "",
             window_label_hi=window.get("window_label_hi") or "",
@@ -1413,7 +1533,7 @@ class SamaraReadingAgent(Processor):
             pending.get("theme_hi") if lang != "english" else pending.get("theme_en")
         ) or ""
         instruction = SAMARA_BEAT2C_REFLECT_PROMPT.format(
-            user_name=profile.get("username") or "dost",
+            user_name=display_user_name(profile),
             user_language=lang,
             window_label=window_label,
             theme=theme,
@@ -1465,7 +1585,7 @@ class SamaraReadingAgent(Processor):
         label = TOPIC_LABELS.get(topic, topic)
         instruction = SAMARA_BEAT4_DEEP_PROMPT.format(
             chart_json=json.dumps(chart, ensure_ascii=False),
-            user_name=profile.get("username") or "dost",
+            user_name=display_user_name(profile),
             user_language=lang,
             current_date=now_ctx["current_date"],
             current_age=now_ctx["current_age"],
@@ -1511,7 +1631,7 @@ class SamaraReadingAgent(Processor):
         lang = _lang(profile)
         instruction = SAMARA_MUHURAT_PROMPT.format(
             chart_json=json.dumps(chart, ensure_ascii=False),
-            user_name=profile.get("username") or "dost",
+            user_name=display_user_name(profile),
             user_language=lang,
             current_date=now_ctx["current_date"],
             current_age=now_ctx["current_age"],
@@ -1644,13 +1764,14 @@ class SamaraReadingAgent(Processor):
 
         year, month, day = ymd
         lat, lon = coords
+        unknown_time = _unknown_time_selected(flow_data)
         hm = _parse_birth_time(flow_data)
-        if hm is None and flow_data.get("flow_kind") != "typed_text":
-            data["bot_response"] = [
-                {"type": "text", "text": ERROR_TEXT},
-                {"type": "flow", "flow": "birth_details"},
-            ]
-            return data
+        # Accept missing time when user opted into unknown_time, typed text
+        # without a clock time, or left time fields blank intentionally.
+        if hm is None and not unknown_time and flow_data.get("flow_kind") != "typed_text":
+            # Time fields blank without OptIn — treat as unknown (honest path)
+            # rather than inventing noon. Form helper says skip if unknown.
+            unknown_time = True
         tz_offset = await asyncio.to_thread(
             timezone_offset_for, lat, lon, year, month, day
         )
@@ -2075,7 +2196,7 @@ async def deliver_paid_deep_answer(
     history_snippet = format_prompt_history(profile) or "(no prior turns)"
     instruction = SAMARA_FOLLOWUP_SYSTEM_PROMPT.format(
         chart_json=json.dumps(chart, ensure_ascii=False),
-        user_name=profile.get("username") or "dost",
+        user_name=display_user_name(profile),
         user_language=lang,
         current_date=now_ctx["current_date"],
         current_year=now_ctx["current_year"],
@@ -2105,6 +2226,8 @@ async def deliver_paid_deep_answer(
             extra={"phone_number": phone_number},
         )
         return None
+
+    text, _ = sanitize_nasa_endorsement(text)
 
     # Debit only after successful generation (never on LLM failure).
     if debit and profile.get("free_deep_answer_used"):

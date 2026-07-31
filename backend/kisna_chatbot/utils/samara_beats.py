@@ -12,6 +12,7 @@ from typing import Any
 
 # ── Beat states on user_profile["conversation_beat"] ─────────────────────────
 BEAT_AWAITING_LANGUAGE = "awaiting_language"
+BEAT_AWAITING_NAME = "awaiting_name"
 BEAT_1_AWAITING_CONFIRM = "beat1_awaiting_confirm"
 BEAT_2_AWAITING_ADVANCE = "beat2_awaiting_advance"  # undated fallback only
 BEAT_2A_AWAITING_CONFIRM = "beat2a_awaiting_confirm"
@@ -26,6 +27,7 @@ BEAT_TRUST_RECOVERY = "trust_recovery"
 ACTIVE_INTRO_BEATS = frozenset(
     {
         BEAT_AWAITING_LANGUAGE,
+        BEAT_AWAITING_NAME,
         BEAT_1_AWAITING_CONFIRM,
         BEAT_2_AWAITING_ADVANCE,
         BEAT_2A_AWAITING_CONFIRM,
@@ -74,6 +76,22 @@ TOPIC_LABELS = {
     "money": "Paisa",
     "family": "Ghar-Parivaar",
     "decision": "Bada Faisla",
+}
+
+TOPIC_LABELS_EN = {
+    "career": "career",
+    "love": "love & marriage",
+    "money": "money",
+    "family": "family",
+    "decision": "a big decision",
+}
+
+TOPIC_LABELS_HI = {
+    "career": "career",
+    "love": "shaadi-pyaar",
+    "money": "paisa",
+    "family": "ghar-parivaar",
+    "decision": "bade faisle",
 }
 
 
@@ -359,22 +377,48 @@ def topic_picker_buttons(*, lang: str) -> dict:
     )
 
 
-def returning_menu_buttons(*, lang: str, name: str) -> dict:
+def topic_label_for(*, topic_key: str | None, lang: str) -> str:
+    if not topic_key:
+        return ""
+    key = str(topic_key).strip().lower()
     if lang == "english":
-        text = (
-            f"Welcome back{', ' + name if name and name != 'dost' else ''}. "
-            "Where would you like to continue?"
-        )
+        return TOPIC_LABELS_EN.get(key, TOPIC_LABELS.get(key, key))
+    return TOPIC_LABELS_HI.get(key, TOPIC_LABELS.get(key, key))
+
+
+def returning_menu_buttons(
+    *, lang: str, name: str, last_topic_label: str | None = None
+) -> dict:
+    name_bit = f", {name}" if name and name != "dost" else ""
+    topic = (last_topic_label or "").strip()
+    if lang == "english":
+        if topic:
+            text = (
+                f"Welcome back{name_bit} 🌙 Last time we talked about your {topic}. "
+                "What would you like to look at today?"
+            )
+        else:
+            text = (
+                f"Welcome back{name_bit}. "
+                "Where would you like to continue?"
+            )
         opts = [
             ("Continue earlier", BTN_RET_CONTINUE),
             ("New question", BTN_RET_NEW),
             ("Today's muhurat", BTN_RET_MUHURAT),
         ]
     else:
-        text = (
-            f"Namaste phir se{', ' + name if name and name != 'dost' else ''} 🙏 "
-            "Aaj kahan se shuru karein?"
-        )
+        if topic:
+            text = (
+                f"Wapas aaye{name_bit}, achha laga 🌙 "
+                f"Pichli baar humne aapke {topic} ki baat ki thi. "
+                "Aaj kya dekhna chahenge?"
+            )
+        else:
+            text = (
+                f"Namaste phir se{name_bit} 🙏 "
+                "Aaj kahan se shuru karein?"
+            )
         opts = [
             ("Wahi baat aage", BTN_RET_CONTINUE),
             ("Naya sawaal", BTN_RET_NEW),
@@ -730,3 +774,137 @@ def relevant_dasha_slice(chart: dict | None) -> list[dict[str, Any]]:
     """Engine-side filter helper for prompts — only is_relevant periods."""
     timeline = (chart or {}).get("dasha_timeline") or []
     return [p for p in timeline if isinstance(p, dict) and p.get("is_relevant")]
+
+
+def soft_past_range_from_chart(chart: dict | None) -> dict[str, Any] | None:
+    """Engine-derived multi-year range for Beat 1 soft past opener.
+
+    Years come only from relevant dasha rows. Never invent. Skip when the
+    user is still young (<15) or no adult-relevant past/current window exists.
+    Prefer a past window spanning at least 2 calendar years; clamp narration
+    spans to ~7 years for the soft opener (ladder still does tighter asks).
+    """
+    meta = (chart or {}).get("meta") or {}
+    try:
+        current_age = int(meta.get("current_age"))
+    except (TypeError, ValueError):
+        return None
+    if current_age < 15:
+        return None
+
+    candidates: list[dict[str, Any]] = []
+    for p in relevant_dasha_slice(chart):
+        start = str(p.get("start") or "")
+        end = str(p.get("end") or "") or None
+        if len(start) < 4:
+            continue
+        try:
+            y0 = int(start[:4])
+            y1 = int(end[:4]) if end and len(end) >= 4 else y0
+        except ValueError:
+            continue
+        if y1 < y0:
+            y0, y1 = y1, y0
+        # Soft opener wants a RANGE, not a single year.
+        if y1 <= y0:
+            continue
+        # Cap displayed span ~7 years (still a range, not an exact day).
+        if (y1 - y0) > 7:
+            y1 = y0 + 7
+        age_start = p.get("lived_from_age")
+        try:
+            if age_start is not None and int(age_start) < 15:
+                # Shift the spoken window to adult years inside the dasha.
+                birth_year = meta.get("birth_year")
+                if birth_year is None:
+                    continue
+                y0 = max(y0, int(birth_year) + 15)
+                if y1 <= y0:
+                    continue
+        except (TypeError, ValueError):
+            pass
+        phase = p.get("phase")
+        if phase not in ("past", "current"):
+            continue
+        candidates.append(
+            {
+                "year_start": y0,
+                "year_end": y1,
+                "planet_en": p.get("planet_en"),
+                "planet_hi": p.get("planet_hi"),
+                "phase": phase,
+                "range_label_en": f"somewhere between {y0} and {y1}",
+                "range_label_hi": f"{y0} se {y1} ke beech",
+            }
+        )
+
+    if not candidates:
+        return None
+    # Prefer a completed past chapter; else current.
+    past = [c for c in candidates if c.get("phase") == "past"]
+    pick = past[-1] if past else candidates[-1]
+    return pick
+
+
+# Exact calendar-day patterns — forbidden in Beat 1 (ranges only).
+_EXACT_DAY_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"\bon\s+\d{1,2}(?:st|nd|rd|th)?\s+"
+        r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+        r"jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|"
+        r"nov(?:ember)?|dec(?:ember)?)\s+\d{4}\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b\d{1,2}(?:st|nd|rd|th)?\s+"
+        r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+        r"jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|"
+        r"nov(?:ember)?|dec(?:ember)?)\s*,?\s*\d{4}\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\b\d{4}-\d{2}-\d{2}\b"),
+    re.compile(r"\b\d{1,2}[-/]\d{1,2}[-/]\d{4}\b"),
+    re.compile(
+        r"\b(?:january|february|march|april|may|june|july|august|september|"
+        r"october|november|december)\s+\d{1,2}(?:st|nd|rd|th)?\s*,?\s*\d{4}\b",
+        re.IGNORECASE,
+    ),
+)
+
+
+def strip_exact_dates_from_beat1(text: str | None) -> tuple[str, bool]:
+    """Remove exact-day date claims from Beat 1 copy. Returns (clean, violated)."""
+    if not text:
+        return "", False
+    cleaned = text
+    violated = False
+    for pattern in _EXACT_DAY_PATTERNS:
+        if pattern.search(cleaned):
+            violated = True
+            cleaned = pattern.sub("", cleaned)
+    if not violated:
+        return text, False
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"\s+([,.!?])", r"\1", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip(" ,.-")
+    return cleaned, True
+
+
+def needs_conversational_name(profile: dict) -> bool:
+    """True when we should ask 'Aapko kya bulaun?' before Beat 1."""
+    if (profile.get("preferred_name") or "").strip():
+        return False
+    raw = (profile.get("username") or "").strip()
+    if not raw or raw.lower() in ("dost", "user", "unknown", "whatsapp user"):
+        return True
+    if raw.isdigit():
+        return True
+    return False
+
+
+def display_user_name(profile: dict) -> str:
+    return (
+        (profile.get("preferred_name") or "").strip()
+        or (profile.get("username") or "").strip()
+        or "dost"
+    )

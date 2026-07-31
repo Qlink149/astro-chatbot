@@ -41,6 +41,16 @@ def test_beat1_human_first_no_jargon_lead():
     t = SAMARA_BEAT1_IDENTITY_PROMPT.lower()
     assert "human observation" in t or "human" in t
     assert "jargon" in t or "mechanics after" in t
+    assert "soft_past_range" in t
+    assert "range" in t
+
+
+def test_shared_rules_relationship_and_age():
+    r = _SHARED_RULES.lower()
+    assert "status" in r
+    assert "you are married" in r
+    assert "current_age" in r or "age" in r
+    assert "meaning" in r
 
 
 def test_beat2a_requires_age_or_skip_helper():

@@ -14,7 +14,7 @@
             "children": [
               {
                 "type": "TextSubheading",
-                "text": "Share your birth details for your Vedic kundli reading."
+                "text": "Share date, birth time (or say you don't know), and place of birth. If time is unknown, Lagna/ascendant and precise house-based timing (career/marriage windows) can't be given — a meaningful Moon + dasha reading is still possible."
               },
               {
                 "type": "DatePicker",
@@ -26,27 +26,27 @@
                 "type": "TextInput",
                 "name": "birth_hour_input",
                 "label": "Hour of Birth (1-12)",
-                "helper-text": "Type the hour, e.g. 7",
+                "helper-text": "Type the hour, e.g. 7. Skip if you don't know.",
                 "input-type": "number",
                 "min-chars": 1,
                 "max-chars": 2,
-                "required": true
+                "required": false
               },
               {
                 "type": "TextInput",
                 "name": "birth_minute_input",
                 "label": "Minute of Birth (0-59)",
-                "helper-text": "Type the minute, e.g. 32",
+                "helper-text": "Type the minute, e.g. 32. Skip if you don't know.",
                 "input-type": "number",
                 "min-chars": 1,
                 "max-chars": 2,
-                "required": true
+                "required": false
               },
               {
                 "type": "RadioButtonsGroup",
                 "name": "birth_ampm",
                 "label": "AM or PM?",
-                "required": true,
+                "required": false,
                 "data-source": [
                   {
                     "id": "AM",
@@ -57,6 +57,12 @@
                     "title": "PM (afternoon / evening)"
                   }
                 ]
+              },
+              {
+                "type": "OptIn",
+                "name": "unknown_time",
+                "label": "I don't know my birth time",
+                "required": false
               },
               {
                 "type": "Dropdown",
@@ -869,6 +875,7 @@
                     "birth_hour_input": "${form.birth_hour_input}",
                     "birth_minute_input": "${form.birth_minute_input}",
                     "birth_ampm": "${form.birth_ampm}",
+                    "unknown_time": "${form.unknown_time}",
                     "birth_place": "${form.birth_place}"
                   }
                 }

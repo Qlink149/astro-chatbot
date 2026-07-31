@@ -161,35 +161,36 @@ class TestParseBirthTimeInvalid:
 
 
 class TestUnknownTimeEscape:
-    """Legacy OptIn 'unknown_time' is now IGNORED — time is mandatory.
+    """OptIn 'unknown_time' restores the honest no-time / surya_kundli path.
 
-    Any stale unknown_time value in the payload must NOT short-circuit the
-    parser. Only hour+minute+ampm (plus legacy fallbacks) decide the result.
+    When the user checks 'I don't know', parser returns None even if hour
+    fields were also filled (OptIn wins). Empty OptIn list does not block
+    a filled clock time.
     """
 
-    def test_unknown_true_is_ignored(self):
+    def test_unknown_true_short_circuits(self):
         assert mod._parse_birth_time({
             "unknown_time": True,
             "birth_hour_input": "7",
             "birth_minute_input": "32",
             "birth_ampm": "AM",
-        }) == (7, 32)
+        }) is None
 
-    def test_unknown_string_true_is_ignored(self):
+    def test_unknown_string_true_short_circuits(self):
         assert mod._parse_birth_time({
             "unknown_time": "true",
             "birth_hour_input": "7",
             "birth_minute_input": "32",
             "birth_ampm": "AM",
-        }) == (7, 32)
+        }) is None
 
-    def test_unknown_list_form_is_ignored(self):
+    def test_unknown_list_form_short_circuits(self):
         assert mod._parse_birth_time({
             "unknown_time": ["unknown_time"],
             "birth_hour_input": "7",
             "birth_minute_input": "32",
             "birth_ampm": "AM",
-        }) == (7, 32)
+        }) is None
 
     def test_unknown_empty_list_does_not_block(self):
         assert mod._parse_birth_time({
@@ -198,6 +199,9 @@ class TestUnknownTimeEscape:
             "birth_minute_input": "32",
             "birth_ampm": "AM",
         }) == (7, 32)
+
+    def test_unknown_alone_returns_none(self):
+        assert mod._parse_birth_time({"unknown_time": True}) is None
 
 
 class TestLegacyPayloads:
@@ -248,17 +252,17 @@ class TestEndToEndFlow:
                     "birth_place": "jaipur",
                 }),
             }
-            with patch.object(mod, "compute_chart", wraps=mod.compute_chart) as spy:
+            with patch.object(
+                mod, "geocode_place", return_value=(26.9124, 75.7873)
+            ), patch.object(
+                mod, "timezone_offset_for", return_value=5.5
+            ):
                 out = await agent.process(data)
-                # compute_chart must have been called with hour=7, minute=32
-                assert spy.called
-                birth_arg = spy.call_args.args[0]
-                assert birth_arg.hour == 7
-                assert birth_arg.minute == 32
 
             chart = profile["chart_json"]
             assert chart is not None
             assert chart["meta"]["has_birth_time"] is True
+            assert chart["meta"]["birth_time"] == "07:32"
             # Response is the language quickreply — NOT the reading itself.
             resp = out["bot_response"]
             assert len(resp) == 1
@@ -269,8 +273,8 @@ class TestEndToEndFlow:
 
         _run(go())
 
-    def test_missing_time_reprompts_flow_and_does_not_compute_chart(self):
-        """New behaviour: no valid time → re-prompt Flow, chart NOT computed."""
+    def test_missing_time_computes_surya_kundli(self):
+        """Blank time (or OptIn) → honest surya_kundli, language ask, no Lagna."""
         async def go():
             agent = mod.SamaraReadingAgent()
             profile = {"username": "Aisha", "chat_history": []}
@@ -284,18 +288,25 @@ class TestEndToEndFlow:
                     "birth_hour_input": "",
                     "birth_minute_input": "",
                     "birth_ampm": "",
+                    "unknown_time": True,
                     "birth_place": "jaipur",
                 }),
             }
-            with patch.object(mod, "compute_chart", wraps=mod.compute_chart) as spy:
+            with patch.object(
+                mod, "geocode_place", return_value=(26.9124, 75.7873)
+            ), patch.object(
+                mod, "timezone_offset_for", return_value=5.5
+            ):
                 out = await agent.process(data)
-                assert not spy.called, "chart must NOT be computed when time missing"
-            assert profile.get("chart_json") is None
+            chart = profile.get("chart_json")
+            assert chart is not None
+            assert chart["meta"]["chart_type"] == "surya_kundli"
+            assert chart["meta"]["has_birth_time"] is False
+            assert chart.get("lagna") is None
             resp = out["bot_response"]
-            # Expect ERROR_TEXT + re-prompt of birth_details flow.
-            types = [r["type"] for r in resp]
-            assert "text" in types
-            assert any(r.get("type") == "flow" and r.get("flow") == "birth_details" for r in resp)
+            assert resp[0]["type"] == "quickreply"
+            ids = [o["postbackText"] for o in resp[0]["options"]]
+            assert "samara_lang_en" in ids
 
         _run(go())
 
@@ -304,8 +315,13 @@ class TestEndToEndFlow:
 
 class TestFlowJson:
     def test_flow_json_schema(self):
-        path = "/app/backend/json/birth_details.json"
-        with open(path) as f:
+        candidates = (
+            "/app/backend/json/birth_details.json",
+            os.path.join(os.path.dirname(__file__), "..", "json", "birth_details.json"),
+        )
+        path = next((p for p in candidates if os.path.isfile(p)), None)
+        assert path, "birth_details.json not found"
+        with open(path, encoding="utf-8") as f:
             flow = json.load(f)
         assert flow["version"] == "7.0"
         screen = flow["screens"][0]
@@ -319,38 +335,45 @@ class TestFlowJson:
         assert by_name["birth_date"]["type"] == "DatePicker"
         assert by_name["birth_date"]["required"] is True
 
-        # birth_hour_input TextInput number
+        # birth_hour_input TextInput number (optional — unknown time allowed)
         h = by_name["birth_hour_input"]
         assert h["type"] == "TextInput"
         assert h["input-type"] == "number"
+        assert h["required"] is False
 
         # birth_minute_input TextInput number
         m = by_name["birth_minute_input"]
         assert m["type"] == "TextInput"
         assert m["input-type"] == "number"
+        assert m["required"] is False
 
         # birth_ampm RadioButtonsGroup with AM & PM
         ampm = by_name["birth_ampm"]
         assert ampm["type"] == "RadioButtonsGroup"
         ampm_ids = {o["id"] for o in ampm["data-source"]}
         assert ampm_ids == {"AM", "PM"}
+        assert ampm["required"] is False
 
-        # birth_hour_input required
-        assert h["required"] is True
-        assert m["required"] is True
-        assert ampm["required"] is True
+        # unknown_time OptIn restored ("I don't know")
+        ut = by_name["unknown_time"]
+        assert ut["type"] == "OptIn"
+        assert ut["required"] is False
 
-        # unknown_time OptIn must be REMOVED (time is now mandatory)
-        assert "unknown_time" not in by_name
-
-        # Flow version bumped to 7.0
-        assert flow["version"] == "7.0"
+        # Single place field only (no duplicate city/location)
+        assert "birth_place" in by_name
+        assert "city" not in by_name
+        assert "location" not in by_name
 
         # birth_place Dropdown, required, ~200 cities
         bp = by_name["birth_place"]
         assert bp["type"] == "Dropdown"
         assert bp["required"] is True
         assert 150 <= len(bp["data-source"]) <= 250, f"got {len(bp['data-source'])}"
+
+        # Honesty copy about missing time
+        sub = next(c for c in children if c.get("type") == "TextSubheading")
+        assert "unknown" in sub["text"].lower() or "don't know" in sub["text"].lower()
+        assert "Lagna" in sub["text"] or "ascendant" in sub["text"].lower()
 
 
 # ── /api/system/user/{phone}/reset endpoint ─────────────────────────────────
