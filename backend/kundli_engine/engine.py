@@ -34,7 +34,9 @@ from jhora.horoscope.dhasa.graha import vimsottari
 
 from kundli_engine.antardasha_labels import (
     curate_turning_points as _curate_turning_points,
+    curate_upcoming_periods as _curate_upcoming_periods,
     window_label_from_ymd as _window_label_from_ymd,
+    window_label_month_from_ymd as _window_label_month_from_ymd,
 )
 
 # pysweph (cp312-compatible fork) can return more than the classic
@@ -220,6 +222,7 @@ def _build_antardasha_timeline(
                 and age_end >= 15
             )
             label_en, label_hi = _window_label_from_ymd(sy, sm)
+            month_en, month_hi = _window_label_month_from_ymd(sy, sm, sd)
             timeline.append({
                 "maha_planet_en": maha_en,
                 "maha_planet_hi": maha_hi,
@@ -233,6 +236,8 @@ def _build_antardasha_timeline(
                 "is_relevant": is_relevant,
                 "window_label_en": label_en,
                 "window_label_hi": label_hi,
+                "window_label_month_en": month_en,
+                "window_label_month_hi": month_hi,
             })
         except Exception:
             continue
@@ -364,10 +369,17 @@ def compute_chart(birth: BirthDetails) -> dict:
             jd, place, birth.year, current_age
         )
         turning_points = _curate_turning_points(antardasha_timeline)
+        upcoming_periods = _curate_upcoming_periods(
+            antardasha_timeline,
+            birth_year=birth.year,
+            current_age=current_age,
+            limit=5,
+        )
         dated_anchors_available = True
     else:
         antardasha_timeline = []
         turning_points = []
+        upcoming_periods = []
         dated_anchors_available = False
 
     chart = {
@@ -399,6 +411,7 @@ def compute_chart(birth: BirthDetails) -> dict:
         "dasha_timeline": dasha_timeline,
         "antardasha_timeline": antardasha_timeline,
         "turning_points": turning_points,
+        "upcoming_periods": upcoming_periods,
     }
     # Houses / bhava — ONLY when birth time is known (whole-sign from Lagna).
     # When time is unknown, omit the key entirely — never estimate.

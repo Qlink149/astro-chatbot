@@ -6,6 +6,8 @@ when kundli deps are missing locally.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from kundli_engine.antardasha_labels import (
@@ -29,6 +31,67 @@ def test_window_label_month_mapping(month, en_prefix, hi_frag):
     en, hi = window_label_from_ymd(2011, month)
     assert en == f"{en_prefix} 2011"
     assert "2011" in hi and hi_frag in hi
+
+
+def test_window_label_month_precision():
+    from kundli_engine.antardasha_labels import window_label_month_from_ymd
+
+    en, hi = window_label_month_from_ymd(2019, 3, 10)
+    assert en == "March 2019"
+    assert "March 2019" in hi and "aas-paas" in hi
+
+    en2, hi2 = window_label_month_from_ymd(2019, 3, 25)
+    assert en2 == "March–April 2019"
+    assert "March–April 2019" in hi2
+
+
+def test_curate_upcoming_periods_future_only():
+    from datetime import date
+
+    from kundli_engine.antardasha_labels import curate_upcoming_periods
+
+    rows = [
+        {
+            "start": "2018-03-01",
+            "end": "2019-03-01",
+            "maha_planet_en": "Saturn",
+            "antar_planet_en": "Venus",
+            "maha_planet_hi": "Shani",
+            "antar_planet_hi": "Shukra",
+            "age_start": 28,
+            "window_label_month_en": "March 2018",
+            "window_label_month_hi": "March 2018 ke aas-paas",
+        },
+        {
+            "start": "2090-06-14",
+            "end": "2091-06-14",
+            "maha_planet_en": "Venus",
+            "antar_planet_en": "Ketu",
+            "maha_planet_hi": "Shukra",
+            "antar_planet_hi": "Ketu",
+            "age_start": 40,
+            "window_label_month_en": "June 2090",
+            "window_label_month_hi": "June 2090 ke aas-paas",
+        },
+        {
+            "start": "2091-11-02",
+            "end": "2092-11-02",
+            "maha_planet_en": "Venus",
+            "antar_planet_en": "Sun",
+            "maha_planet_hi": "Shukra",
+            "antar_planet_hi": "Surya",
+            "age_start": 41,
+            "window_label_month_en": "November 2091",
+            "window_label_month_hi": "November 2091 ke aas-paas",
+        },
+    ]
+    up = curate_upcoming_periods(
+        rows, today=date(2026, 8, 3), birth_year=1990, limit=5
+    )
+    assert len(up) == 2
+    assert all(p["start"] > "2026-08-03" for p in up)
+    assert up[0]["start"] == "2090-06-14"
+    assert up[0]["age_at_start"] == 40
 
 
 def test_curate_turning_points_max_five_and_relevant_only():
@@ -176,13 +239,25 @@ def test_turning_points_bounded_and_relevant(full_chart):
     assert all(p.get("is_relevant") for p in tp)
     for p in tp:
         assert "window_label_en" in p and "window_label_hi" in p
+        assert "window_label_month_en" in p and "window_label_month_hi" in p
         assert "theme_en" in p
+
+
+def test_upcoming_periods_on_full_chart(full_chart):
+    up = full_chart.get("upcoming_periods") or []
+    assert isinstance(up, list)
+    assert len(up) <= 5
+    today = __import__("datetime").date.today().isoformat()
+    for p in up:
+        assert p["start"] > today
+        assert re.match(r"^\d{4}-\d{2}-\d{2}$", p["start"])
 
 
 def test_no_time_empties_dated_anchors(no_time_chart):
     assert no_time_chart["meta"]["dated_anchors_available"] is False
     assert no_time_chart["antardasha_timeline"] == []
     assert no_time_chart["turning_points"] == []
+    assert no_time_chart.get("upcoming_periods") == []
 
 
 def test_mahadasha_timeline_still_present(full_chart):

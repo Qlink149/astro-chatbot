@@ -1516,8 +1516,16 @@ class SamaraReadingAgent(Processor):
         instruction = SAMARA_BEAT2B_DATE_ASK_PROMPT.format(
             user_name=display_user_name(profile),
             user_language=lang,
-            window_label_en=window.get("window_label_en") or "",
-            window_label_hi=window.get("window_label_hi") or "",
+            window_label_month_en=(
+                window.get("window_label_month_en")
+                or window.get("window_label_en")
+                or ""
+            ),
+            window_label_month_hi=(
+                window.get("window_label_month_hi")
+                or window.get("window_label_hi")
+                or ""
+            ),
             theme_en=window.get("theme_en") or "",
             theme_hi=window.get("theme_hi") or "",
         )
@@ -1560,21 +1568,44 @@ class SamaraReadingAgent(Processor):
     ) -> dict:
         lang = _lang(profile)
         pending = profile.get("beat2_pending_window") or {}
-        window_label = (
-            pending.get("window_label_hi")
-            if lang != "english"
-            else pending.get("window_label_en")
-        ) or ""
+        if lang != "english":
+            window_label = (
+                pending.get("window_label_month_hi")
+                or pending.get("window_label_hi")
+                or ""
+            )
+        else:
+            window_label = (
+                pending.get("window_label_month_en")
+                or pending.get("window_label_en")
+                or ""
+            )
         theme = (
             pending.get("theme_hi") if lang != "english" else pending.get("theme_en")
         ) or ""
+        # Optional second month-level window from remaining turning points
+        optional_month = ""
+        chart = profile.get("chart_json") or {}
+        pending_start = str(pending.get("start") or "")
+        for tp in chart.get("turning_points") or []:
+            if not isinstance(tp, dict):
+                continue
+            if str(tp.get("start") or "") == pending_start:
+                continue
+            optional_month = (
+                tp.get("window_label_month_hi")
+                if lang != "english"
+                else tp.get("window_label_month_en")
+            ) or ""
+            if optional_month:
+                break
         instruction = SAMARA_BEAT2C_REFLECT_PROMPT.format(
             user_name=display_user_name(profile),
             user_language=lang,
             window_label=window_label,
             theme=theme,
             user_description=description or "",
-            optional_window_label="",
+            optional_window_label=optional_month,
         )
         try:
             text = await self._llm(
@@ -1631,6 +1662,9 @@ class SamaraReadingAgent(Processor):
             confirmed_events_json=_confirmed_events_json(profile),
             turning_points_json=json.dumps(
                 (chart or {}).get("turning_points") or [], ensure_ascii=False
+            ),
+            upcoming_periods_json=json.dumps(
+                (chart or {}).get("upcoming_periods") or [], ensure_ascii=False
             ),
         )
         try:
@@ -2541,6 +2575,9 @@ async def deliver_paid_deep_answer(
         current_age=now_ctx["current_age"],
         chat_history_snippet=history_snippet,
         confirmed_events_json=_confirmed_events_json(profile),
+        upcoming_periods_json=json.dumps(
+            (chart or {}).get("upcoming_periods") or [], ensure_ascii=False
+        ),
     )
     from kisna_chatbot.ai.samara_models import samara_model_for
 

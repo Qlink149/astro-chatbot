@@ -1009,14 +1009,30 @@ _EXACT_DAY_PATTERNS: tuple[re.Pattern[str], ...] = (
     ),
 )
 
+# Month-level precision — also forbidden in Beat 1 (multi-year range only).
+_BEAT1_MONTH_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"\b(?:january|february|march|april|may|june|july|august|september|"
+        r"october|november|december|"
+        r"jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\b"
+        r"(?:\s*[–-]\s*"
+        r"(?:january|february|march|april|may|june|july|august|september|"
+        r"october|november|december|"
+        r"jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec))?"
+        r"\s+\d{4}\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\b\d{4}-\d{2}\b"),
+)
+
 
 def strip_exact_dates_from_beat1(text: str | None) -> tuple[str, bool]:
-    """Remove exact-day date claims from Beat 1 copy. Returns (clean, violated)."""
+    """Remove day- and month-level date claims from Beat 1. Returns (clean, violated)."""
     if not text:
         return "", False
     cleaned = text
     violated = False
-    for pattern in _EXACT_DAY_PATTERNS:
+    for pattern in _EXACT_DAY_PATTERNS + _BEAT1_MONTH_PATTERNS:
         if pattern.search(cleaned):
             violated = True
             cleaned = pattern.sub("", cleaned)
@@ -1026,6 +1042,38 @@ def strip_exact_dates_from_beat1(text: str | None) -> tuple[str, bool]:
     cleaned = re.sub(r"\s+([,.!?])", r"\1", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip(" ,.-")
     return cleaned, True
+
+
+def dates_in_upcoming_periods(chart: dict | None) -> set[str]:
+    """ISO start/end dates from upcoming_periods — for guards/tests."""
+    out: set[str] = set()
+    for p in (chart or {}).get("upcoming_periods") or []:
+        if not isinstance(p, dict):
+            continue
+        for key in ("start", "end"):
+            val = str(p.get(key) or "")
+            if re.match(r"^\d{4}-\d{2}-\d{2}$", val):
+                out.add(val)
+    return out
+
+
+def extract_iso_dates_from_text(text: str | None) -> set[str]:
+    if not text:
+        return set()
+    return set(re.findall(r"\b\d{4}-\d{2}-\d{2}\b", text))
+
+
+def extract_spoken_day_dates(text: str | None) -> list[str]:
+    """Rough spoken day-level dates (for future-timing tests)."""
+    if not text:
+        return []
+    pat = re.compile(
+        r"\b(\d{1,2}(?:st|nd|rd|th)?\s+"
+        r"(?:january|february|march|april|may|june|july|august|september|"
+        r"october|november|december)\s+\d{4})\b",
+        re.IGNORECASE,
+    )
+    return pat.findall(text)
 
 
 def needs_conversational_name(profile: dict) -> bool:
