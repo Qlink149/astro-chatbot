@@ -37,20 +37,19 @@ def test_beat4_requires_complete_demo():
     assert "turning_points" in p
 
 
-def test_beat1_human_first_no_jargon_lead():
+def test_beat1_requires_personality_and_past_range():
     t = SAMARA_BEAT1_IDENTITY_PROMPT.lower()
-    assert "human observation" in t or "human" in t
-    assert "jargon" in t or "mechanics after" in t
+    assert "must include both" in t or "must include" in t
     assert "soft_past_range" in t
-    assert "range" in t
+    assert "falsifiable" in t or "date range" in t
+    assert "body hurt" in _SHARED_RULES.lower() or "health" in _SHARED_RULES.lower()
+    assert "where does your body hurt" in _SHARED_RULES.lower()
 
 
-def test_shared_rules_relationship_and_age():
+def test_shared_rules_forbid_health_hooks():
     r = _SHARED_RULES.lower()
-    assert "status" in r
-    assert "you are married" in r
-    assert "current_age" in r or "age" in r
-    assert "meaning" in r
+    assert "no health" in r or "body verification" in r or "body hurt" in r
+    assert "falsifiable" in r
 
 
 def test_beat2a_requires_age_or_skip_helper():
