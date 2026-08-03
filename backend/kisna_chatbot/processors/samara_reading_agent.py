@@ -895,14 +895,16 @@ class SamaraReadingAgent(Processor):
                 elif conf == "soft":
                     bump_trust(profile, 0)
                 else:
-                    bump_trust(profile, -1)
+                    bump_trust(profile, -2)
+                    if needs_trust_recovery(profile):
+                        return self._enter_trust_recovery(data, profile, phone_number)
                 return await self._send_beat2_entry(
                     data, profile, phone_number, inbound_id, confirm_signal=conf
                 )
             # Unrecognised free-text: short ack + re-offer buttons (never silent drop)
             ack = ACK_RE_OFFER_TEXT_EN if _lang(profile) == "english" else ACK_RE_OFFER_TEXT_HI
             data["bot_response"] = [
-                beat1_confirm_buttons(ack, lang=_lang(profile))
+                beat1_confirm_buttons(ack, lang=_lang(profile), profile=profile)
             ]
             return data
 
@@ -949,7 +951,7 @@ class SamaraReadingAgent(Processor):
                 return data
             ack = ACK_RE_OFFER_TEXT_EN if _lang(profile) == "english" else ACK_RE_OFFER_TEXT_HI
             data["bot_response"] = [
-                beat2a_confirm_buttons(ack, lang=_lang(profile))
+                beat2a_confirm_buttons(ack, lang=_lang(profile), profile=profile)
             ]
             return data
 
@@ -1310,9 +1312,11 @@ class SamaraReadingAgent(Processor):
         # Attach confirm buttons to the last text chunk
         if chunks:
             last = chunks[-1]["text"]
-            chunks = chunks[:-1] + [beat1_confirm_buttons(last, lang=lang)]
+            chunks = chunks[:-1] + [
+                beat1_confirm_buttons(last, lang=lang, profile=profile)
+            ]
         else:
-            chunks = [beat1_confirm_buttons(text, lang=lang)]
+            chunks = [beat1_confirm_buttons(text, lang=lang, profile=profile)]
 
         mark_beat_send(profile, BEAT_1_AWAITING_CONFIRM, inbound_id)
         # Compat for dashboard "readings delivered"
@@ -1431,9 +1435,11 @@ class SamaraReadingAgent(Processor):
         chunks = text_responses(text)
         if chunks:
             last = chunks[-1]["text"]
-            chunks = chunks[:-1] + [beat2a_confirm_buttons(last, lang=lang)]
+            chunks = chunks[:-1] + [
+                beat2a_confirm_buttons(last, lang=lang, profile=profile)
+            ]
         else:
-            chunks = [beat2a_confirm_buttons(text, lang=lang)]
+            chunks = [beat2a_confirm_buttons(text, lang=lang, profile=profile)]
 
         # Reset per-chart-session window counters for a fresh dated ladder
         profile["beat2_windows_offered"] = 0

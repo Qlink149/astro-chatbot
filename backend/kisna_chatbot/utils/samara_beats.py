@@ -45,7 +45,8 @@ MAX_DATED_WINDOWS_PER_SESSION = 2
 
 # Button postbacks
 BTN_BEAT1_YES = "samara_beat1_yes"
-BTN_BEAT1_SOFT = "samara_beat1_soft"
+BTN_BEAT1_SOFT = "samara_beat1_soft"  # legacy soft confirm (maps to mild trust)
+BTN_BEAT1_NO = "samara_beat1_no"
 BTN_PLACE_YES = "samara_place_yes"
 BTN_PLACE_NO = "samara_place_no"
 BTN_PLACE_CAND_0 = "samara_place_c0"
@@ -192,17 +193,48 @@ def _quickreply(
     }
 
 
-def beat1_confirm_buttons(body: str, *, lang: str) -> dict:
+CHECKIN_PHRASES_EN = (
+    "Am I reading you right?",
+    "Does that land?",
+    "Am I on the right track?",
+    "Does this feel familiar?",
+)
+CHECKIN_PHRASES_HI = (
+    "Main sahi disha mein ja rahi hoon?",
+    "Ye theek lag raha hai?",
+    "Pehchaan aa rahi hai?",
+    "Am I reading you right?",
+)
+
+
+def next_checkin_phrase(profile: dict, *, lang: str) -> str:
+    """Rotate check-in wording; never repeat the previous phrase id."""
+    pool = CHECKIN_PHRASES_EN if lang == "english" else CHECKIN_PHRASES_HI
+    last = int(profile.get("last_checkin_phrase_id") or -1)
+    nxt = (last + 1) % len(pool)
+    if nxt == last and len(pool) > 1:
+        nxt = (nxt + 1) % len(pool)
+    profile["last_checkin_phrase_id"] = nxt
+    return pool[nxt]
+
+
+def beat1_confirm_buttons(body: str, *, lang: str, profile: dict | None = None) -> dict:
+    checkin = ""
+    if profile is not None:
+        checkin = next_checkin_phrase(profile, lang=lang)
+    text = body.rstrip()
+    if checkin and checkin.lower() not in text.lower():
+        text = f"{text}\n{checkin}"
     if lang == "english":
-        yes_t, soft_t = "Yes, exactly", "A little bit"
+        yes_t, no_t = "Yes", "Not really"
     else:
-        yes_t, soft_t = "Haan, bilkul", "Thoda sa"
+        yes_t, no_t = "Haan", "Nahi bilkul"
     return _quickreply(
-        body,
+        text,
         "samara_beat1_confirm",
         [
             {"type": "text", "title": yes_t, "postbackText": BTN_BEAT1_YES},
-            {"type": "text", "title": soft_t, "postbackText": BTN_BEAT1_SOFT},
+            {"type": "text", "title": no_t, "postbackText": BTN_BEAT1_NO},
         ],
     )
 
@@ -270,13 +302,19 @@ def beat2_next_button(body: str, *, lang: str) -> dict:
     )
 
 
-def beat2a_confirm_buttons(body: str, *, lang: str) -> dict:
+def beat2a_confirm_buttons(body: str, *, lang: str, profile: dict | None = None) -> dict:
+    checkin = ""
+    if profile is not None:
+        checkin = next_checkin_phrase(profile, lang=lang)
+    text = body.rstrip()
+    if checkin and checkin.lower() not in text.lower():
+        text = f"{text}\n{checkin}"
     if lang == "english":
         yes_t, no_t = "Yes, that's right", "No, not really"
     else:
         yes_t, no_t = "Haan, sahi hai", "Nahi, aisa nahi"
     return _quickreply(
-        body,
+        text,
         "samara_beat2a_confirm",
         [
             {"type": "text", "title": yes_t[:20], "postbackText": BTN_BEAT2A_YES},
@@ -735,7 +773,7 @@ def detect_language_switch(text: str) -> str | None:
 
 
 def parse_beat1_confirm(messages: dict) -> str | None:
-    """Return 'yes' | 'soft' | None."""
+    """Return 'yes' | 'soft' | 'no' | None."""
     pid, title = _extract_postback(messages)
     if pid == BTN_BEAT1_YES or title in (
         "haan, bilkul",
@@ -746,6 +784,14 @@ def parse_beat1_confirm(messages: dict) -> str | None:
         "yes",
     ):
         return "yes"
+    if pid == BTN_BEAT1_NO or title in (
+        "not really",
+        "nahi bilkul",
+        "nahi",
+        "no",
+        "nope",
+    ):
+        return "no"
     if pid == BTN_BEAT1_SOFT or title in (
         "thoda sa",
         "a little bit",
@@ -756,6 +802,8 @@ def parse_beat1_confirm(messages: dict) -> str | None:
     freetext = parse_yes_no_freetext(title)
     if freetext == "yes":
         return "yes"
+    if freetext == "no":
+        return "no"
     return None
 
 
