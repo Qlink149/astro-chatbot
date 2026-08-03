@@ -30,6 +30,7 @@ def record_usage(record: UsageRecord) -> None:
                 "phone_number": record.phone_number,
                 "error": record.error,
                 "fallback_used": record.fallback_used,
+                "purpose": record.purpose,
                 "created_at": int(time.time()),
             }
         )
@@ -53,6 +54,7 @@ def build_usage_record(
     phone_number: str | None = None,
     error: str | None = None,
     fallback_used: bool = False,
+    purpose: str | None = None,
 ) -> UsageRecord:
     cost = estimate_cost_usd(model, prompt_tokens, completion_tokens)
     return UsageRecord(
@@ -68,4 +70,5 @@ def build_usage_record(
         phone_number=phone_number,
         error=error,
         fallback_used=fallback_used,
+        purpose=purpose,
     )

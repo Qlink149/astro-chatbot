@@ -99,6 +99,7 @@ async def complete_chat(
     model: str | None = None,
     model_fallback: str | None = None,
     temperature: float | None = None,
+    purpose: str | None = None,
 ) -> str:
     """
     Run a chat completion for the given agent using configured provider(s).
@@ -174,5 +175,6 @@ async def complete_chat(
                     phone_number=phone_number,
                     error=error_msg,
                     fallback_used=result.fallback_used or used_fallback_model,
+                    purpose=purpose,
                 )
             )

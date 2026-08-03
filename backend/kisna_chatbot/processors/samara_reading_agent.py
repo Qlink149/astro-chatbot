@@ -43,6 +43,7 @@ from kisna_chatbot.utils.samara_gate import (
 )
 from kisna_chatbot.utils.geocode_in import timezone_offset_for
 from kisna_chatbot.utils.place_resolve import resolve_place_candidates
+from kisna_chatbot.utils.slim_chart import slim_chart_for_beat
 from kisna_chatbot.utils.distress import (
     assess_distress,
     crisis_response_text,
@@ -1263,6 +1264,7 @@ class SamaraReadingAgent(Processor):
             "client_id": "samara",
             "model": primary,
             "temperature": temperature,
+            "purpose": purpose,
         }
         if fallback:
             kwargs["model_fallback"] = fallback
@@ -1355,7 +1357,7 @@ class SamaraReadingAgent(Processor):
         lang = _lang(profile)
         soft_range = soft_past_range_from_chart(chart)
         instruction = SAMARA_BEAT1_IDENTITY_PROMPT.format(
-            chart_json=json.dumps(chart, ensure_ascii=False),
+            chart_json=json.dumps(slim_chart_for_beat(chart, "beat1"), ensure_ascii=False),
             user_name=display_user_name(profile),
             user_language=lang,
             current_date=now_ctx["current_date"],
@@ -1441,7 +1443,7 @@ class SamaraReadingAgent(Processor):
         lang = _lang(profile)
         relevant = relevant_dasha_slice(chart)
         instruction = SAMARA_BEAT2_PAST_PROMPT.format(
-            chart_json=json.dumps(chart, ensure_ascii=False),
+            chart_json=json.dumps(slim_chart_for_beat(chart, "beat2"), ensure_ascii=False),
             relevant_dasha_json=json.dumps(relevant, ensure_ascii=False),
             user_name=display_user_name(profile),
             user_language=lang,
@@ -1717,7 +1719,7 @@ class SamaraReadingAgent(Processor):
         history_snippet = format_prompt_history(profile) or "(no prior turns)"
         label = TOPIC_LABELS.get(topic, topic)
         instruction = SAMARA_BEAT4_DEEP_PROMPT.format(
-            chart_json=json.dumps(chart, ensure_ascii=False),
+            chart_json=json.dumps(slim_chart_for_beat(chart, "beat4"), ensure_ascii=False),
             user_name=display_user_name(profile),
             user_language=lang,
             current_date=now_ctx["current_date"],
@@ -1767,7 +1769,7 @@ class SamaraReadingAgent(Processor):
         now_ctx = _now_context(chart)
         lang = _lang(profile)
         instruction = SAMARA_MUHURAT_PROMPT.format(
-            chart_json=json.dumps(chart, ensure_ascii=False),
+            chart_json=json.dumps(slim_chart_for_beat(chart, "muhurat"), ensure_ascii=False),
             user_name=display_user_name(profile),
             user_language=lang,
             current_date=now_ctx["current_date"],
@@ -2801,7 +2803,10 @@ async def deliver_paid_deep_answer(
     lang = _lang(profile)
     history_snippet = format_prompt_history(profile) or "(no prior turns)"
     instruction = SAMARA_FOLLOWUP_SYSTEM_PROMPT.format(
-        chart_json=json.dumps(chart, ensure_ascii=False),
+        chart_json=json.dumps(
+            slim_chart_for_beat(chart, "paid_deep" if debit else "followup"),
+            ensure_ascii=False,
+        ),
         user_name=display_user_name(profile),
         user_language=lang,
         current_date=now_ctx["current_date"],

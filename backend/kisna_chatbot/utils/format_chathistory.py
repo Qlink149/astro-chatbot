@@ -9,7 +9,7 @@ def _logger():
     return logger
 
 
-DEFAULT_HISTORY_WINDOW = 10
+DEFAULT_HISTORY_WINDOW = 6  # ~3 turns both sides (user+assistant)
 
 
 def history_window_size() -> int:

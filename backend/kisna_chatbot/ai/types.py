@@ -73,3 +73,4 @@ class UsageRecord:
     phone_number: str | None = None
     error: str | None = None
     fallback_used: bool = False
+    purpose: str | None = None
