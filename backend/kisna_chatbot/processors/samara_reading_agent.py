@@ -829,16 +829,12 @@ class SamaraReadingAgent(Processor):
                 )
             is_new = not profile.get("chat_history")
             emit_funnel_event("birth_flow_opened", phone_number=phone_number)
-            # Language may be unknown pre-chart; default Hindi greeting, English if set
-            greet = (
-                GREETING_TEXT_EN
-                if profile.get("user_language") == "english"
-                else GREETING_TEXT_HI
-            )
+            # Pre-language: always English. After Hindi is chosen, nudge uses HI.
+            greet = GREETING_TEXT_EN
             nudge = (
-                NUDGE_TEXT_EN
-                if profile.get("user_language") == "english"
-                else NUDGE_TEXT_HI
+                NUDGE_TEXT_HI
+                if profile.get("user_language") == "hindi"
+                else NUDGE_TEXT_EN
             )
             outbound = greet if is_new else nudge
             outbound, _ = sanitize_nasa_endorsement(outbound)
