@@ -13,6 +13,7 @@ from typing import Any
 # ── Beat states on user_profile["conversation_beat"] ─────────────────────────
 BEAT_AWAITING_LANGUAGE = "awaiting_language"
 BEAT_AWAITING_NAME = "awaiting_name"
+BEAT_AWAITING_PLACE_CONFIRM = "awaiting_place_confirm"
 BEAT_1_AWAITING_CONFIRM = "beat1_awaiting_confirm"
 BEAT_2_AWAITING_ADVANCE = "beat2_awaiting_advance"  # undated fallback only
 BEAT_2A_AWAITING_CONFIRM = "beat2a_awaiting_confirm"
@@ -28,6 +29,7 @@ ACTIVE_INTRO_BEATS = frozenset(
     {
         BEAT_AWAITING_LANGUAGE,
         BEAT_AWAITING_NAME,
+        BEAT_AWAITING_PLACE_CONFIRM,
         BEAT_1_AWAITING_CONFIRM,
         BEAT_2_AWAITING_ADVANCE,
         BEAT_2A_AWAITING_CONFIRM,
@@ -44,6 +46,11 @@ MAX_DATED_WINDOWS_PER_SESSION = 2
 # Button postbacks
 BTN_BEAT1_YES = "samara_beat1_yes"
 BTN_BEAT1_SOFT = "samara_beat1_soft"
+BTN_PLACE_YES = "samara_place_yes"
+BTN_PLACE_NO = "samara_place_no"
+BTN_PLACE_CAND_0 = "samara_place_c0"
+BTN_PLACE_CAND_1 = "samara_place_c1"
+BTN_PLACE_CAND_2 = "samara_place_c2"
 BTN_BEAT2_NEXT = "samara_beat2_next"
 BTN_BEAT2A_YES = "samara_beat2a_yes"
 BTN_BEAT2A_NO = "samara_beat2a_no"
@@ -198,6 +205,60 @@ def beat1_confirm_buttons(body: str, *, lang: str) -> dict:
             {"type": "text", "title": soft_t, "postbackText": BTN_BEAT1_SOFT},
         ],
     )
+
+
+def place_confirm_buttons(
+    *,
+    display: str,
+    candidates: list[dict] | None = None,
+) -> dict:
+    """English place confirmation (pre-language). Up to 3 candidate buttons or Yes/No."""
+    cands = [c for c in (candidates or []) if isinstance(c, dict) and c.get("display")]
+    if len(cands) >= 2:
+        text = "I found a few matches — which one is your place of birth?"
+        opts = []
+        postbacks = (BTN_PLACE_CAND_0, BTN_PLACE_CAND_1, BTN_PLACE_CAND_2)
+        for i, c in enumerate(cands[:3]):
+            title = str(c["display"])[:20]
+            opts.append({"type": "text", "title": title, "postbackText": postbacks[i]})
+        opts.append({"type": "text", "title": "None of these", "postbackText": BTN_PLACE_NO})
+        return _quickreply(text, "samara_place_confirm", opts, caption="Pick one")
+    text = f"{display} — is that right?"
+    return _quickreply(
+        text,
+        "samara_place_confirm",
+        [
+            {"type": "text", "title": "Yes", "postbackText": BTN_PLACE_YES},
+            {"type": "text", "title": "No, try again", "postbackText": BTN_PLACE_NO},
+        ],
+    )
+
+
+def parse_place_confirm(messages: dict) -> tuple[str | None, int | None]:
+    """Return (action, candidate_index).
+
+    action: 'yes' | 'no' | 'cand' | None
+    """
+    pid, title = _extract_postback(messages)
+    if pid == BTN_PLACE_YES or (title or "").lower() in ("yes", "haan", "ha", "sahi hai"):
+        return "yes", None
+    if pid == BTN_PLACE_NO or (title or "").lower() in (
+        "no, try again",
+        "no",
+        "nahi",
+        "none of these",
+    ):
+        return "no", None
+    for i, btn in enumerate((BTN_PLACE_CAND_0, BTN_PLACE_CAND_1, BTN_PLACE_CAND_2)):
+        if pid == btn:
+            return "cand", i
+    if isinstance(messages, dict) and messages.get("type") == "text":
+        body = ((messages.get("text") or {}).get("body") or "").strip().lower()
+        if body in ("yes", "haan", "ha", "sahi", "sahi hai", "y"):
+            return "yes", None
+        if body in ("no", "nahi", "n", "nope"):
+            return "no", None
+    return None, None
 
 
 def beat2_next_button(body: str, *, lang: str) -> dict:

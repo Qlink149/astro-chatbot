@@ -35,6 +35,7 @@ pyasn1==0.6.4
 cryptography==49.0.0
 
 geopy==2.5.0
+rapidfuzz==3.13.0
 geographiclib==2.1
 geocoder==1.38.1
 python-dateutil==2.9.0.post0

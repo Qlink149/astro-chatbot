@@ -36,9 +36,10 @@ def send_birth_details_flow(phone_number: str):
             "header": {"type": "text", "text": "Aapki Janam Kundli ✨"},
             "body": {
                 "text": (
-                    "Apni birth details share kijiye — date, time (ya 'I don't know'), "
-                    "aur place of birth. Time na pata ho to Lagna aur precise timing "
-                    "nahi milenge, phir bhi meaningful reading possible hai. 🌙"
+                    "Share your birth details — date, time (or 'I don't know'), "
+                    "and place of birth as free text (city + state/country). "
+                    "If time is unknown, Lagna won't be exact, but a meaningful "
+                    "reading is still possible. 🌙"
                 )
             },
             "action": {

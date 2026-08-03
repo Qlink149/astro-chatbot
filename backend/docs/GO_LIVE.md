@@ -50,10 +50,16 @@ Modes must include `FLOWS_MESSAGE` for birth Flow completions.
 ## 4. Birth Flow (if needed)
 
 ```bash
-python scripts/setup_gupshup_flow.py
+# Rebuild offline city index (GeoNames CC-BY) if missing/stale:
+python scripts/build_geonames_index.py
+
+# Upload + publish Flow JSON after birth_details.json changes:
+python scripts/setup_gupshup_flow.py --flow-id $SAMARA_BIRTH_FLOW_ID --upload-only
+python scripts/setup_gupshup_flow.py --flow-id $SAMARA_BIRTH_FLOW_ID --publish-only
 ```
 
-Set printed id as `SAMARA_BIRTH_FLOW_ID`.
+Set printed id as `SAMARA_BIRTH_FLOW_ID` if creating a new flow.
+Place of birth is free text; Samara confirms the resolved city before computing the chart.
 
 ## 5. Dashboard
 

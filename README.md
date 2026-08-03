@@ -89,7 +89,8 @@ Login with `SUPER_ADMIN_USERNAME` / `SUPER_ADMIN_PASSWORD`.
 ## 5. Current conversation flow (paywall OFF)
 
 1. First inbound → greeting + `birth_details` Flow.
-2. Flow completion → geocode → `compute_chart()` → language buttons.
+2. Flow completion → offline place resolve (GeoNames) → **place confirm** →
+   `compute_chart()` → language buttons.
 3. Language chosen → **Beat 1** identity (Sonnet) + confirm buttons.
 4. Confirm → **Beat 2** past proof from `is_relevant` dashas only + continue button.
 5. Continue → **Beat 3** topic picker (5 buttons).

@@ -41,7 +41,8 @@ from kisna_chatbot.utils.samara_gate import (
     mark_bot_asked_question,
     needs_trust_recovery,
 )
-from kisna_chatbot.utils.geocode_in import geocode_place, timezone_offset_for
+from kisna_chatbot.utils.geocode_in import timezone_offset_for
+from kisna_chatbot.utils.place_resolve import resolve_place_candidates
 from kisna_chatbot.utils.distress import (
     assess_distress,
     crisis_response_text,
@@ -64,6 +65,7 @@ from kisna_chatbot.utils.samara_beats import (
     BEAT_2C_AWAITING_DETAIL,
     BEAT_AWAITING_LANGUAGE,
     BEAT_AWAITING_NAME,
+    BEAT_AWAITING_PLACE_CONFIRM,
     BEAT_AWAITING_TOPIC,
     BEAT_POST_FREE_DEEP,
     BEAT_RETURNING_MENU,
@@ -91,11 +93,13 @@ from kisna_chatbot.utils.samara_beats import (
     parse_beat2b_confirm,
     parse_paywall_choice,
     parse_pay_intent,
+    parse_place_confirm,
     parse_returning_choice,
     parse_topic_choice,
     parse_want_more_choice,
     parse_yes_no_freetext,
     paywall_buttons,
+    place_confirm_buttons,
     looks_like_broke_objection,
     relevant_dasha_slice,
     returning_menu_buttons,
@@ -211,9 +215,18 @@ CANNED_MUHURAT_EN = (
 )
 
 GEOCODE_FAIL_TEXT = (
-    "Hmm, mujhe woh jagah nahi mili 😔 Koi baat nahi — form dobara khol kar "
-    "place of birth mein apne sheher ya paas ke bade sheher ka naam likhiye "
-    "(jaise Jaipur, Lucknow, Mumbai). 🙏"
+    "Hmm, I couldn't find that place 😔 Try being more specific — "
+    "e.g. 'Udaipur Rajasthan' or 'Hyderabad Telangana'. 🙏"
+)
+
+PLACE_RETYPE_TEXT = (
+    "No problem — type the place again a bit more specifically "
+    "(e.g. 'Udaipur Rajasthan'). 🌙"
+)
+
+PLACE_MAX_ATTEMPTS_TEXT = (
+    "Let's pick from the closest matches below — tap one, or type a more "
+    "specific place. 🙏"
 )
 
 ERROR_TEXT = (
@@ -794,10 +807,21 @@ class SamaraReadingAgent(Processor):
         if flow_data is not None:
             return await self._handle_birth_details(data, profile, phone_number, flow_data)
 
+        # Place confirmation before chart exists
+        if profile.get("conversation_beat") == BEAT_AWAITING_PLACE_CONFIRM:
+            return await self._handle_place_confirm(
+                data, profile, phone_number, inbound_id, messages
+            )
+
         if not profile.get("chart_json"):
             text_body = ""
             if messages.get("type") == "text":
                 text_body = ((messages.get("text") or {}).get("body") or "").strip()
+            # Retype place while awaiting confirm (free text without flow)
+            if profile.get("pending_birth") and text_body and not _parse_birth_text(text_body):
+                return await self._resolve_and_ask_place(
+                    data, profile, phone_number, inbound_id, text_body, retype=True
+                )
             typed = _parse_birth_text(text_body)
             if typed:
                 return await self._handle_birth_details(
@@ -1726,6 +1750,7 @@ class SamaraReadingAgent(Processor):
     async def _handle_birth_details(
         self, data: dict, profile: dict, phone_number: str, flow_data: dict
     ) -> dict:
+        """Parse DOB/time/place, resolve candidates, ask confirmation — no chart yet."""
         ymd = _parse_birth_date(flow_data.get("birth_date"))
         raw_place = str(flow_data.get("birth_place") or "").strip()
         if not ymd or not raw_place:
@@ -1735,25 +1760,190 @@ class SamaraReadingAgent(Processor):
             ]
             return data
 
-        place = raw_place.replace("_", " ").title()
-        coords = await asyncio.to_thread(geocode_place, place)
-        if not coords:
+        year, month, day = ymd
+        unknown_time = _unknown_time_selected(flow_data)
+        hm = _parse_birth_time(flow_data)
+        if hm is None and not unknown_time and flow_data.get("flow_kind") != "typed_text":
+            unknown_time = True
+
+        profile["pending_birth"] = {
+            "year": year,
+            "month": month,
+            "day": day,
+            "hour": hm[0] if hm else None,
+            "minute": hm[1] if hm else None,
+            "raw_place": raw_place.replace("_", " ").strip(),
+        }
+        profile["place_attempts"] = 0
+        return await self._resolve_and_ask_place(
+            data,
+            profile,
+            phone_number,
+            "",
+            profile["pending_birth"]["raw_place"],
+            retype=False,
+        )
+
+    async def _resolve_and_ask_place(
+        self,
+        data: dict,
+        profile: dict,
+        phone_number: str,
+        inbound_id: str,
+        query: str,
+        *,
+        retype: bool,
+    ) -> dict:
+        if retype:
+            profile["place_attempts"] = int(profile.get("place_attempts") or 0) + 1
+            if profile.get("pending_birth"):
+                profile["pending_birth"]["raw_place"] = query.strip()
+
+        candidates = await asyncio.to_thread(
+            resolve_place_candidates, query, phone_number=phone_number, limit=3
+        )
+        if not candidates:
+            data["bot_response"] = [
+                {"type": "text", "text": GEOCODE_FAIL_TEXT},
+                {"type": "flow", "flow": "birth_details"},
+            ]
+            mark_beat_send(profile, BEAT_AWAITING_PLACE_CONFIRM, inbound_id)
+            return data
+
+        profile["place_candidates"] = candidates
+        attempts = int(profile.get("place_attempts") or 0)
+        # After 3 failed confirms, force button list of nearest matches
+        force_multi = attempts >= 3 and len(candidates) >= 1
+        if force_multi or len(candidates) >= 2:
+            # Present up to 3 as choices when ambiguous or max attempts
+            show = candidates if (len(candidates) >= 2 or force_multi) else candidates
+            if force_multi:
+                data["bot_response"] = [
+                    {"type": "text", "text": PLACE_MAX_ATTEMPTS_TEXT},
+                    place_confirm_buttons(
+                        display=candidates[0]["display"],
+                        candidates=show,
+                    ),
+                ]
+            else:
+                data["bot_response"] = [
+                    place_confirm_buttons(
+                        display=candidates[0]["display"],
+                        candidates=show,
+                    )
+                ]
+        else:
+            data["bot_response"] = [
+                place_confirm_buttons(
+                    display=candidates[0]["display"],
+                    candidates=None,
+                )
+            ]
+            profile["pending_place"] = candidates[0]
+
+        if len(candidates) == 1 and not force_multi:
+            profile["pending_place"] = candidates[0]
+        elif len(candidates) >= 2:
+            profile["pending_place"] = None  # must pick a button
+
+        mark_beat_send(profile, BEAT_AWAITING_PLACE_CONFIRM, inbound_id)
+        return data
+
+    async def _handle_place_confirm(
+        self,
+        data: dict,
+        profile: dict,
+        phone_number: str,
+        inbound_id: str,
+        messages: dict,
+    ) -> dict:
+        action, cand_i = parse_place_confirm(messages)
+        candidates = list(profile.get("place_candidates") or [])
+
+        if action == "cand" and cand_i is not None and 0 <= cand_i < len(candidates):
+            profile["pending_place"] = candidates[cand_i]
+            return await self._compute_chart_from_pending(
+                data, profile, phone_number
+            )
+
+        if action == "yes":
+            place = profile.get("pending_place")
+            if not place and len(candidates) == 1:
+                place = candidates[0]
+                profile["pending_place"] = place
+            if not place:
+                # Ambiguous — re-show candidates
+                data["bot_response"] = [
+                    place_confirm_buttons(
+                        display=(candidates[0]["display"] if candidates else "that place"),
+                        candidates=candidates or None,
+                    )
+                ]
+                return data
+            return await self._compute_chart_from_pending(
+                data, profile, phone_number
+            )
+
+        if action == "no":
+            profile["place_attempts"] = int(profile.get("place_attempts") or 0) + 1
+            profile["pending_place"] = None
+            if int(profile["place_attempts"]) >= 3 and candidates:
+                data["bot_response"] = [
+                    {"type": "text", "text": PLACE_MAX_ATTEMPTS_TEXT},
+                    place_confirm_buttons(
+                        display=candidates[0]["display"],
+                        candidates=candidates,
+                    ),
+                ]
+                return data
+            data["bot_response"] = [{"type": "text", "text": PLACE_RETYPE_TEXT}]
+            return data
+
+        # Free-text retype of place name
+        text_body = ""
+        if isinstance(messages, dict) and messages.get("type") == "text":
+            text_body = ((messages.get("text") or {}).get("body") or "").strip()
+        if text_body:
+            return await self._resolve_and_ask_place(
+                data, profile, phone_number, inbound_id, text_body, retype=True
+            )
+
+        # Unrecognised — re-offer
+        pending = profile.get("pending_place") or (candidates[0] if candidates else None)
+        if pending:
+            data["bot_response"] = [
+                place_confirm_buttons(
+                    display=pending.get("display") or "that place",
+                    candidates=candidates if len(candidates) >= 2 else None,
+                )
+            ]
+        else:
+            data["bot_response"] = [{"type": "text", "text": PLACE_RETYPE_TEXT}]
+        return data
+
+    async def _compute_chart_from_pending(
+        self, data: dict, profile: dict, phone_number: str
+    ) -> dict:
+        """Compute chart only after place is confirmed."""
+        pending = profile.get("pending_birth") or {}
+        place = profile.get("pending_place") or {}
+        if not pending or not place.get("lat") or not place.get("lon"):
             data["bot_response"] = [
                 {"type": "text", "text": GEOCODE_FAIL_TEXT},
                 {"type": "flow", "flow": "birth_details"},
             ]
             return data
 
-        year, month, day = ymd
-        lat, lon = coords
-        unknown_time = _unknown_time_selected(flow_data)
-        hm = _parse_birth_time(flow_data)
-        # Accept missing time when user opted into unknown_time, typed text
-        # without a clock time, or left time fields blank intentionally.
-        if hm is None and not unknown_time and flow_data.get("flow_kind") != "typed_text":
-            # Time fields blank without OptIn — treat as unknown (honest path)
-            # rather than inventing noon. Form helper says skip if unknown.
-            unknown_time = True
+        year = int(pending["year"])
+        month = int(pending["month"])
+        day = int(pending["day"])
+        hm = None
+        if pending.get("hour") is not None and pending.get("minute") is not None:
+            hm = (int(pending["hour"]), int(pending["minute"]))
+        lat = float(place["lat"])
+        lon = float(place["lon"])
+        place_name = str(place.get("display") or place.get("name") or "Unknown")
+
         tz_offset = await asyncio.to_thread(
             timezone_offset_for, lat, lon, year, month, day
         )
@@ -1782,7 +1972,7 @@ class SamaraReadingAgent(Processor):
             timezone_offset=tz_offset,
             hour=hm[0] if hm else None,
             minute=hm[1] if hm else None,
-            place_name=place,
+            place_name=place_name,
         )
         try:
             chart = await asyncio.to_thread(compute_chart, birth)
@@ -1793,7 +1983,7 @@ class SamaraReadingAgent(Processor):
                 exc,
                 extra={
                     "phone_number": phone_number,
-                    "place": place,
+                    "place": place_name,
                     "lat": lat,
                     "lon": lon,
                     "dob": f"{year:04d}-{month:02d}-{day:02d}",
@@ -1811,10 +2001,13 @@ class SamaraReadingAgent(Processor):
         profile["birth_details"] = {
             "date_of_birth": f"{year:04d}-{month:02d}-{day:02d}",
             "time_of_birth": f"{hm[0]:02d}:{hm[1]:02d}" if hm else None,
-            "place_name": place,
+            "place_name": place_name,
             "latitude": lat,
             "longitude": lon,
             "timezone_offset": tz_offset,
+            "country": place.get("country"),
+            "admin1": place.get("admin1"),
+            "inferred_country": place.get("cc"),
         }
         profile["user_language"] = None
         profile["conversation_beat"] = BEAT_AWAITING_LANGUAGE
@@ -1823,19 +2016,26 @@ class SamaraReadingAgent(Processor):
         profile["open_loop_summary"] = None
         profile["chosen_topic"] = None
         profile["beat_last_inbound_id"] = None
-        # Clear dated-anchor memory on chart recompute
         profile["confirmed_events"] = []
         profile["rejected_windows"] = []
         profile["beat2_windows_offered"] = 0
         profile["beat2_offered_starts"] = []
         profile["beat2_pending_window"] = None
+        # Clear place-confirm scratch
+        for key in (
+            "pending_birth",
+            "pending_place",
+            "place_candidates",
+            "place_attempts",
+        ):
+            profile.pop(key, None)
         emit_funnel_event("birth_flow_completed", phone_number=phone_number)
         logger.info(
             "Samara chart computed",
             extra={
                 "phone_number": phone_number,
                 "chart_type": chart["meta"]["chart_type"],
-                "place": place,
+                "place": place_name,
             },
         )
         data["bot_response"] = [_language_quickreply_response()]
