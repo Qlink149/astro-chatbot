@@ -2440,6 +2440,101 @@ class SamaraReadingAgent(Processor):
                 data, profile, phone_number, question
             )
 
+        from kisna_chatbot.utils.samara_focus import (
+            focus_prompt_block,
+            get_focus,
+            update_focus_from_user,
+        )
+        from kisna_chatbot.utils.samara_intent import (
+            classify_intent,
+            is_free_intent,
+        )
+
+        update_focus_from_user(profile, text=question)
+        focus = get_focus(profile)
+        recent = format_prompt_history(profile) or ""
+
+        async def _intent_llm(instruction: str, user_content: str) -> str:
+            return await self._llm(
+                instruction=instruction,
+                user_content=user_content,
+                phone_number=phone_number,
+                agent_display_name="SamaraIntent",
+                max_output_tokens=40,
+                purpose="intent",
+            )
+
+        intent = await classify_intent(
+            question,
+            focus=focus,
+            recent_turns=recent,
+            classify_fn=_intent_llm,
+        )
+
+        if intent == "payment_intent":
+            return self._enter_pwyw_amount(data, profile, phone_number)
+
+        if intent == "correction":
+            return self._offer_chart_recompute(data, profile, phone_number)
+
+        if intent == "smalltalk":
+            lang = _lang(profile)
+            data["bot_response"] = [
+                {
+                    "type": "text",
+                    "text": (
+                        "Namaste 🌙 I'm here — what would you like to look at in your chart?"
+                        if lang == "english"
+                        else "Namaste 🌙 Main yahin hoon — chart mein kya dekhna hai?"
+                    ),
+                }
+            ]
+            return data
+
+        if intent == "offtopic":
+            lang = _lang(profile)
+            data["bot_response"] = [
+                {
+                    "type": "text",
+                    "text": (
+                        "I'm best with your chart — career, love, timing. "
+                        "What feels most pressing?"
+                        if lang == "english"
+                        else "Main chart mein best hoon — career, pyaar, timing. "
+                        "Sabse zaroori kya hai abhi?"
+                    ),
+                }
+            ]
+            return data
+
+        if intent in ("confirmation", "denial") and is_free_intent(intent):
+            # Outside intro beats: short free ack, no debit
+            lang = _lang(profile)
+            if intent == "confirmation":
+                body = (
+                    "Achha — noted. Aur batao?"
+                    if lang != "english"
+                    else "Got it. What else is on your mind?"
+                )
+            else:
+                from kisna_chatbot.utils.samara_gate import bump_trust
+
+                bump_trust(profile, -1)
+                body = (
+                    "Theek hai — main adjust karti hoon. Kya clarify karun?"
+                    if lang != "english"
+                    else "Alright — I'll adjust. What should I clarify?"
+                )
+            data["bot_response"] = [{"type": "text", "text": body}]
+            return data
+
+        if is_free_intent(intent):
+            # followup / clarification / meta / test_me — free, no gate, no debit
+            return await self._handle_free_intent_reply(
+                data, profile, phone_number, question=question, intent=intent
+            )
+
+        # new_deep_question only past this point may gate / debit
         action = decide_gate_action(
             profile,
             amount_inr=_payment_amount_inr(),
@@ -2534,6 +2629,78 @@ class SamaraReadingAgent(Processor):
 
         assert count_gate_messages(responses) <= 1
         data["bot_response"] = responses
+        return data
+
+    def _offer_chart_recompute(
+        self, data: dict, profile: dict, phone_number: str
+    ) -> dict:
+        """Birth-time / details correction — free; clear chart and resend flow."""
+        lang = _lang(profile)
+        profile["chart_json"] = None
+        profile["conversation_beat"] = None
+        profile.pop("pending_birth", None)
+        profile.pop("pending_place", None)
+        body = (
+            "No problem — let's rebuild your kundli with the right details. "
+            "Share date, time, and place in the form below."
+            if lang == "english"
+            else "Koi baat nahi — sahi details se kundli dobara banate hain. "
+            "Neeche form mein date, time aur place share kariye."
+        )
+        data["bot_response"] = [
+            {"type": "text", "text": body},
+            {"type": "flow", "flow": "birth_details"},
+        ]
+        emit_funnel_event("chart_recompute_offered", phone_number=phone_number)
+        return data
+
+    async def _handle_free_intent_reply(
+        self,
+        data: dict,
+        profile: dict,
+        phone_number: str,
+        *,
+        question: str,
+        intent: str,
+    ) -> dict:
+        """followup / clarification / meta / test_me — never debit, never gate."""
+        from kisna_chatbot.utils.samara_focus import focus_prompt_block
+
+        focus_block = focus_prompt_block(profile)
+        meta_hint = ""
+        if intent == "meta":
+            meta_hint = (
+                "Answer plainly how Samara works (real kundli from birth details, "
+                "planetary periods, pay-what-you-want for deeper answers). No sell-hard."
+            )
+        elif intent == "clarification":
+            meta_hint = "Re-explain simply against the focus object. No new deep topic."
+        elif intent == "test_me":
+            meta_hint = (
+                "If they named a year, use only engine antardasha covering that year "
+                "(month-level labels). Never assert what happened. Free trust builder."
+            )
+        else:
+            meta_hint = (
+                "Answer as a FREE follow-up against CONVERSATION FOCUS. "
+                "Resolve kab/why/aur against last_claim and dates_on_table."
+            )
+        wrapped = (
+            f"{focus_block}\n\nIntent: {intent}\n{meta_hint}\n\n"
+            f"User message: {question}\n"
+            "Do NOT mention credits or paywall. Do NOT invent dates."
+        )
+        result = await deliver_paid_deep_answer(
+            profile=profile,
+            phone_number=phone_number,
+            question=wrapped,
+            debit=False,
+        )
+        if not result:
+            data["bot_response"] = [{"type": "text", "text": ERROR_TEXT}]
+            return data
+        text, _ = result
+        data["bot_response"] = text_responses(text)
         return data
 
     def _handle_data_deletion(
