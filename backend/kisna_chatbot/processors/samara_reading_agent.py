@@ -1699,8 +1699,32 @@ class SamaraReadingAgent(Processor):
 
         # Free-text already captured — advance to topic picker
         mark_beat_send(profile, BEAT_AWAITING_TOPIC, inbound_id)
-        data["bot_response"] = chunks + [topic_picker_buttons(lang=lang)]
+        offer = self._maybe_test_me_offer(profile)
+        data["bot_response"] = chunks
+        if offer:
+            data["bot_response"] = chunks + [{"type": "text", "text": offer}]
+        data["bot_response"] = data["bot_response"] + [
+            topic_picker_buttons(lang=lang)
+        ]
         return data
+
+    def _maybe_test_me_offer(self, profile: dict) -> str | None:
+        """Once per session after a confirmed dated anchor."""
+        if profile.get("test_me_offered") or profile.get("test_me_used"):
+            return None
+        if not (profile.get("confirmed_events") or profile.get("beat2_offered_starts")):
+            return None
+        profile["test_me_offered"] = True
+        lang = _lang(profile)
+        if lang == "english":
+            return (
+                "If you want, name another year — I'll tell you what was running "
+                "in your chart then. (No guessing what happened.)"
+            )
+        return (
+            "Koi aur saal poochiye — main bataungi us waqt kya chal raha tha. "
+            "(Kya hua, woh main claim nahi karti.)"
+        )
 
     def _send_topic_picker(self, data: dict, profile: dict) -> dict:
         mark_beat_send(profile, BEAT_AWAITING_TOPIC)
@@ -2532,6 +2556,16 @@ class SamaraReadingAgent(Processor):
 
         if is_free_intent(intent):
             # followup / clarification / meta / test_me — free, no gate, no debit
+            if intent == "test_me" or (
+                profile.get("test_me_offered")
+                and not profile.get("test_me_used")
+                and _extract_year_challenge(question)
+            ):
+                handled = self._handle_test_me_year(
+                    data, profile, phone_number, question
+                )
+                if handled is not None:
+                    return handled
             return await self._handle_free_intent_reply(
                 data, profile, phone_number, question=question, intent=intent
             )
@@ -2654,6 +2688,83 @@ class SamaraReadingAgent(Processor):
             {"type": "flow", "flow": "birth_details"},
         ]
         emit_funnel_event("chart_recompute_offered", phone_number=phone_number)
+        return data
+
+    def _handle_test_me_year(
+        self,
+        data: dict,
+        profile: dict,
+        phone_number: str,
+        question: str,
+    ) -> dict | None:
+        """Once-per-session year challenge — engine period character only."""
+        year = _extract_year_challenge(question)
+        if year is None:
+            return None
+        if profile.get("test_me_used"):
+            lang = _lang(profile)
+            data["bot_response"] = [
+                {
+                    "type": "text",
+                    "text": (
+                        "One challenge per session is enough — let's keep going with your question."
+                        if lang == "english"
+                        else "Ek session mein ek challenge kaafi hai — aage badhte hain."
+                    ),
+                }
+            ]
+            return data
+
+        from kundli_engine.antardasha_labels import lookup_antardasha_covering_year
+
+        chart = profile.get("chart_json") or {}
+        row = lookup_antardasha_covering_year(
+            chart.get("antardasha_timeline") or [], year
+        )
+        lang = _lang(profile)
+        if not row:
+            data["bot_response"] = [
+                {
+                    "type": "text",
+                    "text": (
+                        f"I don't have a clear antardasha window for {year} in this chart."
+                        if lang == "english"
+                        else f"{year} ke liye chart mein clear antardasha window nahi dikha."
+                    ),
+                }
+            ]
+            return data
+
+        profile["test_me_used"] = True
+        month = (
+            row.get("window_label_month_hi")
+            if lang != "english"
+            else row.get("window_label_month_en")
+        ) or (
+            row.get("window_label_hi")
+            if lang != "english"
+            else row.get("window_label_en")
+        )
+        maha = row.get("maha_planet_en") or ""
+        antar = row.get("antar_planet_en") or ""
+        from kundli_engine.antardasha_labels import ANTAR_THEMES
+
+        theme_en, theme_hi = ANTAR_THEMES.get(antar, ("change", "badlav"))
+        theme = theme_hi if lang != "english" else theme_en
+        if lang == "english":
+            body = (
+                f"Around {month}, your chart was in a {maha}–{antar} chapter "
+                f"with a texture of {theme}. I won't claim what happened — "
+                f"does that period ring a bell?"
+            )
+        else:
+            body = (
+                f"{month} ke aas-paas chart mein {maha}–{antar} chapter chal raha tha — "
+                f"texture: {theme}. Kya hua, woh main claim nahi karti — "
+                f"kya yeh period pehchaan mein aata hai?"
+            )
+        emit_funnel_event("test_me_answered", phone_number=phone_number)
+        data["bot_response"] = [{"type": "text", "text": body}]
         return data
 
     async def _handle_free_intent_reply(
@@ -2785,6 +2896,19 @@ _TIMING_KEYWORDS = frozenset({
 def _looks_like_timing_intent(text: str) -> bool:
     t = (text or "").strip().lower()
     return any(k in t for k in _TIMING_KEYWORDS)
+
+
+def _extract_year_challenge(text: str) -> int | None:
+    """Pull a 4-digit year suitable for test-me (1950–2100)."""
+    import re
+
+    m = re.search(r"\b(19\d{2}|20\d{2})\b", text or "")
+    if not m:
+        return None
+    year = int(m.group(1))
+    if 1950 <= year <= 2100:
+        return year
+    return None
 
 
 async def deliver_paid_deep_answer(

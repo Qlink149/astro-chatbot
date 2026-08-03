@@ -71,7 +71,7 @@ def get_ai_settings() -> dict:
         "anthropic_chat_model_sonnet": _env(
             "ANTHROPIC_CHAT_MODEL_SONNET", DEFAULT_ANTHROPIC_SONNET_MODEL
         ),
-        "samara_history_window": int(_env("SAMARA_HISTORY_WINDOW", "10")),
+        "samara_history_window": int(_env("SAMARA_HISTORY_WINDOW", "6")),
         "samara_daily_gen_cap": int(_env("SAMARA_DAILY_GEN_CAP", "40")),
         "max_tokens_classifier": int(
             _env("AI_MAX_TOKENS_CLASSIFIER", str(MAX_OUTPUT_TOKENS_CLASSIFIER))
