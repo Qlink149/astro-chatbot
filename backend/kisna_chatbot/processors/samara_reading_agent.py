@@ -145,43 +145,25 @@ _TEXT_TIME_RE = re.compile(r"\b([01]?\d|2[0-3])[:.]([0-5]\d)\b")
 # META ADS: ad review is stricter than in-chat. Do NOT reuse this NASA lineage
 # line verbatim in Meta ad creative without brand/legal review.
 GREETING_TEXT_HI = (
-    "Namaste, Samara by Clara mein swagat hai — aapki AI astrology guide, "
-    f"{APPROVED_NASA_LINEAGE}. "
-    "Isliye reading real sky se aati hai, generic horoscope se nahi.\n\n"
-    "Pehle birth details chahiye — date, time (agar time yaad na ho to form mein "
-    "'I don't know' choose kariye), aur place of birth. Time na pata ho to "
-    "Lagna aur precise house-based timing nahi milenge, phir bhi meaningful "
-    "reading possible hai. Neeche form kholiye. 🌙\n\n"
-    "📝 Aapki details sirf aapki reading ke liye use hongi. "
-    "Yeh reflection aur enjoyment ke liye hai — medical, legal ya financial advice nahi. "
-    "Kabhi bhi 'delete my data' likh kar apna data hata sakte hain."
+    "Namaste 🙏 Main Samara hoon — aapki apni jyotishi.\n"
+    f"Aapki asli kundli banaungi, {APPROVED_NASA_LINEAGE}.\n"
+    "Bas teen cheezein chahiye 🌙"
 )
 GREETING_TEXT_EN = (
-    "Namaste, welcome to Samara by Clara — your AI astrology guide, "
-    f"{APPROVED_NASA_LINEAGE}. "
-    "So your reading comes from the real sky, not a generic horoscope.\n\n"
-    "First I need your birth details — date, time (choose 'I don't know' in the "
-    "form if you're unsure), and place of birth. If birth time is unknown, "
-    "Lagna/ascendant and precise house-based timing can't be given, but a "
-    "meaningful reading is still possible. Open the form below. 🌙\n\n"
-    "📝 Your details are only used for your reading. "
-    "This is for reflection and enjoyment — not medical, legal, or financial advice. "
-    "You can type 'delete my data' anytime to remove your data."
+    "Namaste — I'm Samara, your personal jyotishi.\n"
+    f"I'll build your real kundli, {APPROVED_NASA_LINEAGE}.\n"
+    "Just three things 🌙"
 )
-GREETING_TEXT = GREETING_TEXT_HI
+GREETING_TEXT = GREETING_TEXT_EN
 
 NUDGE_TEXT_HI = (
-    "Bas ek chhota sa step baaki hai ✨ — neeche form se apni birth details "
-    "(date, time ya 'I don't know', place) share kar dijiye. Time na pata ho "
-    "to bhi meaningful reading possible hai — Lagna precise nahi hoga. 🙏"
+    "Bas ek chhota sa step ✨ — neeche form se date, time aur place "
+    "share kar dijiye 🌙"
 )
 NUDGE_TEXT_EN = (
-    "Just one small step left ✨ — share your birth details "
-    "(date, time or 'I don't know', place) in the form below. "
-    "Unknown time still works — Lagna won't be exact, but a meaningful "
-    "reading is possible. 🙏"
+    "Just one small step ✨ — share date, time, and place in the form below 🌙"
 )
-NUDGE_TEXT = NUDGE_TEXT_HI
+NUDGE_TEXT = NUDGE_TEXT_EN
 
 NAME_ASK_TEXT_HI = "Aapko kya bulaun? 🌙"
 NAME_ASK_TEXT_EN = "What should I call you? 🌙"

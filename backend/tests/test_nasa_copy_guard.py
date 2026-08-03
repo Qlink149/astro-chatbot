@@ -40,10 +40,11 @@ def test_greeting_contains_approved_lineage_not_endorsement():
         assert "partnership with nasa" not in sample.lower()
 
 
-def test_greeting_mentions_unknown_time_honesty():
-    assert "don't know" in GREETING_TEXT_EN.lower() or "i don't know" in GREETING_TEXT_EN.lower()
-    assert "lagna" in GREETING_TEXT_EN.lower()
-    assert "i don't know" in GREETING_TEXT_HI.lower() or "time" in GREETING_TEXT_HI.lower()
+def test_greeting_is_short():
+    for sample in (GREETING_TEXT_EN, GREETING_TEXT_HI):
+        lines = [ln for ln in sample.strip().split("\n") if ln.strip()]
+        assert 1 <= len(lines) <= 3, sample
+        assert APPROVED_NASA_LINEAGE in sample
 
 
 def test_sanitize_replaces_backed_by_nasa():
