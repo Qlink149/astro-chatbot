@@ -51,9 +51,11 @@ BTN_BEAT1_SOFT = "samara_beat1_soft"  # legacy soft confirm (maps to mild trust)
 BTN_BEAT1_NO = "samara_beat1_no"
 BTN_PLACE_YES = "samara_place_yes"
 BTN_PLACE_NO = "samara_place_no"
+BTN_PLACE_OTHERS = "samara_place_others"  # clear-winner → open list
 BTN_PLACE_CAND_0 = "samara_place_c0"
 BTN_PLACE_CAND_1 = "samara_place_c1"
 BTN_PLACE_CAND_2 = "samara_place_c2"
+PLACE_CAND_POSTBACKS = (BTN_PLACE_CAND_0, BTN_PLACE_CAND_1, BTN_PLACE_CAND_2)
 BTN_BEAT2_NEXT = "samara_beat2_next"
 BTN_BEAT2A_YES = "samara_beat2a_yes"
 BTN_BEAT2A_NO = "samara_beat2a_no"
@@ -243,23 +245,161 @@ def beat1_confirm_buttons(body: str, *, lang: str, profile: dict | None = None) 
     )
 
 
-def place_confirm_buttons(
-    *,
-    display: str,
-    candidates: list[dict] | None = None,
-) -> dict:
-    """English place confirmation (pre-language). Up to 3 candidate buttons or Yes/No."""
+def _place_button_title(display: str, *, max_len: int = 20) -> str:
+    """WhatsApp quick-reply titles max 20 chars — avoid mid-word / trailing commas."""
+    raw = " ".join(str(display or "").replace("\n", " ").split()).strip(" ,")
+    if not raw:
+        return "Place"
+    if len(raw) <= max_len:
+        return raw
+    # Prefer "City, Admin" then truncate cleanly
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
+    if len(parts) >= 2:
+        short = f"{parts[0]}, {parts[1]}"
+        if len(short) <= max_len:
+            return short
+        if len(parts[0]) <= max_len:
+            return parts[0][:max_len].rstrip(" ,")
+    cut = raw[:max_len].rstrip(" ,")
+    # Drop dangling partial word after last space if we chopped mid-token
+    if " " in cut and not raw.startswith(cut):
+        maybe = cut.rsplit(" ", 1)[0].rstrip(" ,")
+        if len(maybe) >= 8:
+            return maybe
+    return cut or raw[:max_len]
+
+
+def is_clear_place_winner(candidates: list[dict] | None) -> bool:
+    """True when top match is clearly preferred over the rest (skip list)."""
     cands = [c for c in (candidates or []) if isinstance(c, dict) and c.get("display")]
-    if len(cands) >= 2:
-        text = "I found a few matches — which one is your place of birth?"
-        opts = []
-        postbacks = (BTN_PLACE_CAND_0, BTN_PLACE_CAND_1, BTN_PLACE_CAND_2)
-        for i, c in enumerate(cands[:3]):
-            title = str(c["display"])[:20]
-            opts.append({"type": "text", "title": title, "postbackText": postbacks[i]})
-        opts.append({"type": "text", "title": "None of these", "postbackText": BTN_PLACE_NO})
-        return _quickreply(text, "samara_place_confirm", opts, caption="Pick one")
-    text = f"{display} — is that right?"
+    if len(cands) <= 1:
+        return True
+    s0 = float(cands[0].get("score") or 0)
+    s1 = float(cands[1].get("score") or 0)
+    gap = s0 - s1
+    if gap >= 8.0:
+        return True
+    p0 = int(cands[0].get("population") or 0)
+    p1 = int(cands[1].get("population") or 0)
+    # Big city clearly dominates a village with a near-equal fuzzy score
+    if gap >= 2.0 and p0 >= 100_000 and p0 >= max(5 * max(p1, 1), 200_000):
+        return True
+    return False
+
+
+def _list_row_title(cand: dict, *, used: set[str]) -> str:
+    """Unique ≤24-char list row title (Meta requires unique titles in a section)."""
+    name = str(cand.get("name") or "").strip() or "Place"
+    admin = str(cand.get("admin1") or "").strip()
+    country = str(cand.get("country") or "").strip()
+    candidates_titles = []
+    if admin:
+        candidates_titles.append(f"{name}, {admin}")
+    candidates_titles.append(name)
+    if country:
+        candidates_titles.append(f"{name}, {country}")
+    candidates_titles.append(str(cand.get("display") or name))
+    for raw in candidates_titles:
+        title = _place_button_title(raw, max_len=24)
+        key = title.lower()
+        if key and key not in used:
+            used.add(key)
+            return title
+    # Last resort: append a digit
+    for n in range(2, 10):
+        title = _place_button_title(f"{name} ({n})", max_len=24)
+        key = title.lower()
+        if key not in used:
+            used.add(key)
+            return title
+    used.add(name.lower())
+    return _place_button_title(name, max_len=24)
+
+
+def _list_row_description(cand: dict) -> str:
+    parts = [
+        str(cand.get("admin1") or "").strip(),
+        str(cand.get("country") or "").strip(),
+    ]
+    desc = ", ".join(p for p in parts if p)
+    if not desc:
+        disp = str(cand.get("display") or "").strip()
+        # Prefer the part after the city name
+        if "," in disp:
+            desc = disp.split(",", 1)[1].strip(" ,")
+        else:
+            desc = disp
+    return _place_button_title(desc, max_len=72)
+
+
+def place_confirm_numbered_text(candidates: list[dict]) -> str:
+    """Plain-text fallback when list send fails — full names, reply 1/2/3."""
+    cands = [c for c in (candidates or []) if isinstance(c, dict) and c.get("display")]
+    lines = ["I found a few matches — reply with a number:\n"]
+    for i, c in enumerate(cands[:3], start=1):
+        lines.append(f"{i}. {c['display']}")
+    lines.append("\nOr type your city again.")
+    return "\n".join(lines)
+
+
+def place_confirm_list(candidates: list[dict]) -> dict:
+    """WhatsApp list message (dropdown) with full place names in descriptions."""
+    cands = [c for c in (candidates or []) if isinstance(c, dict) and c.get("display")]
+    show = cands[:3]
+    used: set[str] = set()
+    options: list[dict] = []
+    for i, c in enumerate(show):
+        options.append(
+            {
+                "type": "text",
+                "title": _list_row_title(c, used=used),
+                "description": _list_row_description(c),
+                "postbackText": PLACE_CAND_POSTBACKS[i],
+            }
+        )
+    none_title = "None of these"
+    used.add(none_title.lower())
+    options.append(
+        {
+            "type": "text",
+            "title": none_title,
+            "description": "Type your city again",
+            "postbackText": BTN_PLACE_NO,
+        }
+    )
+    body = "I found a few matches — which one is your place of birth?"
+    return {
+        "type": "list",
+        "title": "Birth place",
+        "body": body,
+        "msgid": "samara_place_confirm",
+        "button": "View places",
+        "items": [{"title": "Places", "options": options}],
+        "fallback_text": place_confirm_numbered_text(show),
+    }
+
+
+def place_confirm_winner_buttons(display: str) -> dict:
+    """Clear-winner Yes / show-others (full name in message body)."""
+    text = f"I think you mean {(display or '').strip()} — is that right?"
+    return _quickreply(
+        text,
+        "samara_place_confirm",
+        [
+            {"type": "text", "title": "Yes", "postbackText": BTN_PLACE_YES},
+            {
+                "type": "text",
+                "title": "No, show others",
+                "postbackText": BTN_PLACE_OTHERS,
+            },
+        ],
+        caption="Confirm",
+    )
+
+
+def place_confirm_single_buttons(display: str) -> dict:
+    """Single geocode hit — Yes / retype."""
+    text = f"{(display or '').strip()} — is that right?"
     return _quickreply(
         text,
         "samara_place_confirm",
@@ -270,29 +410,115 @@ def place_confirm_buttons(
     )
 
 
-def parse_place_confirm(messages: dict) -> tuple[str | None, int | None]:
+def place_confirm_ui(
+    *,
+    display: str,
+    candidates: list[dict] | None = None,
+    force_list: bool = False,
+) -> dict:
+    """Hybrid place picker: clear winner → Yes/No; else list (dropdown)."""
+    cands = [c for c in (candidates or []) if isinstance(c, dict) and c.get("display")]
+    if force_list and cands:
+        return place_confirm_list(cands)
+    if len(cands) >= 2:
+        if not force_list and is_clear_place_winner(cands):
+            return place_confirm_winner_buttons(cands[0].get("display") or display)
+        return place_confirm_list(cands)
+    return place_confirm_single_buttons(display or (cands[0]["display"] if cands else ""))
+
+
+# Back-compat alias used by older call sites / tests
+def place_confirm_buttons(
+    *,
+    display: str,
+    candidates: list[dict] | None = None,
+) -> dict:
+    return place_confirm_ui(display=display, candidates=candidates)
+
+
+def match_place_candidate_from_text(
+    text: str, candidates: list[dict] | None
+) -> int | None:
+    """Map list title / truncated label / typed name back to a candidate index."""
+    raw = " ".join(str(text or "").replace("\n", " ").split()).strip(" ,").lower()
+    if not raw:
+        return None
+    # Numbered fallback: "1" / "2" / "3"
+    if raw in ("1", "2", "3"):
+        idx = int(raw) - 1
+        cands = [c for c in (candidates or []) if isinstance(c, dict)]
+        if 0 <= idx < len(cands[:3]):
+            return idx
+        return None
+    if len(raw) < 3:
+        return None
+    cands = [c for c in (candidates or []) if isinstance(c, dict) and c.get("display")]
+    used: set[str] = set()
+    # Prefer unique list-row / full-display matches over bare city name
+    for i, c in enumerate(cands[:3]):
+        disp = str(c.get("display") or "").strip()
+        disp_l = disp.lower().strip(" ,")
+        row_title = _list_row_title(c, used=used).lower()
+        short = _place_button_title(disp).strip(" ,").lower()
+        if raw in (disp_l, row_title, short):
+            return i
+        if disp_l.startswith(raw) or raw.startswith(disp_l):
+            return i
+        if row_title.startswith(raw) or raw.startswith(row_title):
+            return i
+    # Bare name only if unique among candidates
+    name_hits = [
+        i
+        for i, c in enumerate(cands[:3])
+        if str(c.get("name") or "").strip().lower() == raw
+    ]
+    if len(name_hits) == 1:
+        return name_hits[0]
+    return None
+
+
+def parse_place_confirm(
+    messages: dict, candidates: list[dict] | None = None
+) -> tuple[str | None, int | None]:
     """Return (action, candidate_index).
 
-    action: 'yes' | 'no' | 'cand' | None
+    action: 'yes' | 'no' | 'others' | 'cand' | None
     """
     pid, title = _extract_postback(messages)
-    if pid == BTN_PLACE_YES or (title or "").lower() in ("yes", "haan", "ha", "sahi hai"):
+    title_l = (title or "").strip().lower()
+    if pid == BTN_PLACE_YES or title_l in ("yes", "haan", "ha", "sahi hai"):
         return "yes", None
-    if pid == BTN_PLACE_NO or (title or "").lower() in (
+    if pid == BTN_PLACE_OTHERS or title_l in (
+        "no, show others",
+        "show others",
+        "others",
+    ):
+        return "others", None
+    if pid == BTN_PLACE_NO or title_l in (
         "no, try again",
         "no",
         "nahi",
         "none of these",
     ):
         return "no", None
-    for i, btn in enumerate((BTN_PLACE_CAND_0, BTN_PLACE_CAND_1, BTN_PLACE_CAND_2)):
+    for i, btn in enumerate(PLACE_CAND_POSTBACKS):
         if pid == btn:
             return "cand", i
+    # Gupshup sometimes delivers the button/list title as plain text (no postback id).
+    body = ""
     if isinstance(messages, dict) and messages.get("type") == "text":
-        body = ((messages.get("text") or {}).get("body") or "").strip().lower()
-        if body in ("yes", "haan", "ha", "sahi", "sahi hai", "y"):
+        body = ((messages.get("text") or {}).get("body") or "").strip()
+    probe = body or title
+    idx = match_place_candidate_from_text(probe, candidates)
+    if idx is not None:
+        return "cand", idx
+    if body:
+        low = body.lower().strip()
+        if low in ("yes", "haan", "ha", "sahi", "sahi hai", "y"):
             return "yes", None
-        if body in ("no", "nahi", "n", "nope"):
+        if low in ("no, show others", "show others", "others"):
+            return "others", None
+        if low in ("no", "nahi", "n", "nope", "no, try again", "none of these"):
             return "no", None
     return None, None
 
@@ -716,8 +942,9 @@ def _extract_postback(messages: dict) -> tuple[str, str]:
     if mtype == "interactive":
         inter = messages.get("interactive") or {}
         br = inter.get("button_reply") or {}
-        raw_id = str(br.get("id") or "")
-        title = str(br.get("title") or "").strip().lower()
+        lr = inter.get("list_reply") or {}
+        raw_id = str(br.get("id") or lr.get("id") or "")
+        title = str(br.get("title") or lr.get("title") or "").strip().lower()
         try:
             parsed = json.loads(raw_id) if raw_id else None
             if isinstance(parsed, dict):
@@ -735,6 +962,13 @@ def _extract_postback(messages: dict) -> tuple[str, str]:
     if mtype == "text":
         body = ((messages.get("text") or {}).get("body") or "").strip()
         return "", body.lower()
+    # Some Gupshup payloads use type=list_reply at top level
+    if mtype == "list_reply":
+        lr = messages.get("list_reply") or messages
+        return (
+            str(lr.get("id") or lr.get("postbackText") or "").strip(),
+            str(lr.get("title") or "").strip().lower(),
+        )
     return "", ""
 
 

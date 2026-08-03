@@ -10,6 +10,9 @@ from kisna_chatbot.whatsapp_functions.media.send_image_message import (
 from kisna_chatbot.whatsapp_functions.quick_reply.send_quick_reply import (
     send_quickreply,
 )
+from kisna_chatbot.whatsapp_functions.list_message.send_list_message import (
+    send_list_message,
+)
 from kisna_chatbot.whatsapp_functions.send_text_message import (
     send_text_message_with_retry,
 )
@@ -45,6 +48,7 @@ class ResponseManager:
         self.register_handler("media", self._handle_media)
         self.register_handler("flow", self._handle_flow)
         self.register_handler("quickreply", self._handle_quick_reply)
+        self.register_handler("list", self._handle_list)
         self.register_handler("cta_url", self._handle_cta_url)
         self.register_handler("skip", self._handle_skip)
 
@@ -59,10 +63,12 @@ class ResponseManager:
         for response in bot_responses:
             outbound_rate_limiter.wait_if_needed(phone_number)
             response_type = response.get("type")
-            # Human-ish typing pause for text / quickreply (cap ~4s).
-            if response_type in ("text", "quickreply"):
+            # Human-ish typing pause for text / interactive picks (cap ~4s).
+            if response_type in ("text", "quickreply", "list"):
                 preview = str(
-                    response.get("text") or response.get("body") or ""
+                    response.get("text")
+                    or response.get("body")
+                    or ""
                 )
                 time.sleep(_human_typing_delay_seconds(preview))
             handler = self._handlers.get(response_type)
@@ -93,6 +99,28 @@ class ResponseManager:
 
     def _handle_quick_reply(self, phone_number, bot_response):
         return send_quickreply(phone_number=phone_number, bot_response=bot_response)
+
+    def _handle_list(self, phone_number, bot_response):
+        try:
+            return send_list_message(
+                phone_number=phone_number, bot_response=bot_response
+            )
+        except Exception as e:
+            logger.exception(
+                "Failed to send list message — falling back to numbered text",
+                extra={"phone_number": phone_number, "error": str(e)},
+            )
+            fallback = str(bot_response.get("fallback_text") or "").strip()
+            if not fallback:
+                fallback = str(
+                    bot_response.get("body") or bot_response.get("text") or ""
+                ).strip()
+            if not fallback:
+                fallback = "Please reply with the number of your place, or type it again."
+            return send_text_message_with_retry(
+                phone_number=phone_number,
+                bot_response={"type": "text", "text": fallback},
+            )
 
     def _handle_cta_url(self, phone_number, bot_response):
         try:

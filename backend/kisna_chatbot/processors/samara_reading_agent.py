@@ -103,7 +103,8 @@ from kisna_chatbot.utils.samara_beats import (
     parse_want_more_choice,
     parse_yes_no_freetext,
     paywall_buttons,
-    place_confirm_buttons,
+    place_confirm_ui,
+    is_clear_place_winner,
     pwyw_confirm_buttons,
     looks_like_broke_objection,
     relevant_dasha_slice,
@@ -2095,39 +2096,43 @@ class SamaraReadingAgent(Processor):
 
         profile["place_candidates"] = candidates
         attempts = int(profile.get("place_attempts") or 0)
-        # After 3 failed confirms, force button list of nearest matches
-        force_multi = attempts >= 3 and len(candidates) >= 1
-        if force_multi or len(candidates) >= 2:
-            # Present up to 3 as choices when ambiguous or max attempts
-            show = candidates if (len(candidates) >= 2 or force_multi) else candidates
-            if force_multi:
-                data["bot_response"] = [
-                    {"type": "text", "text": PLACE_MAX_ATTEMPTS_TEXT},
-                    place_confirm_buttons(
-                        display=candidates[0]["display"],
-                        candidates=show,
-                    ),
-                ]
-            else:
-                data["bot_response"] = [
-                    place_confirm_buttons(
-                        display=candidates[0]["display"],
-                        candidates=show,
-                    )
-                ]
-        else:
+        force_list = attempts >= 3 and len(candidates) >= 1
+        clear = is_clear_place_winner(candidates)
+
+        if force_list:
             data["bot_response"] = [
-                place_confirm_buttons(
+                {"type": "text", "text": PLACE_MAX_ATTEMPTS_TEXT},
+                place_confirm_ui(
+                    display=candidates[0]["display"],
+                    candidates=candidates,
+                    force_list=True,
+                ),
+            ]
+            profile["pending_place"] = None
+        elif len(candidates) >= 2 and clear:
+            profile["pending_place"] = candidates[0]
+            data["bot_response"] = [
+                place_confirm_ui(
+                    display=candidates[0]["display"],
+                    candidates=candidates,
+                )
+            ]
+        elif len(candidates) >= 2:
+            profile["pending_place"] = None
+            data["bot_response"] = [
+                place_confirm_ui(
+                    display=candidates[0]["display"],
+                    candidates=candidates,
+                )
+            ]
+        else:
+            profile["pending_place"] = candidates[0]
+            data["bot_response"] = [
+                place_confirm_ui(
                     display=candidates[0]["display"],
                     candidates=None,
                 )
             ]
-            profile["pending_place"] = candidates[0]
-
-        if len(candidates) == 1 and not force_multi:
-            profile["pending_place"] = candidates[0]
-        elif len(candidates) >= 2:
-            profile["pending_place"] = None  # must pick a button
 
         mark_beat_send(profile, BEAT_AWAITING_PLACE_CONFIRM, inbound_id)
         return data
@@ -2140,7 +2145,9 @@ class SamaraReadingAgent(Processor):
         inbound_id: str,
         messages: dict,
     ) -> dict:
-        action, cand_i = parse_place_confirm(messages)
+        action, cand_i = parse_place_confirm(
+            messages, candidates=list(profile.get("place_candidates") or [])
+        )
         candidates = list(profile.get("place_candidates") or [])
 
         if action == "cand" and cand_i is not None and 0 <= cand_i < len(candidates):
@@ -2151,15 +2158,19 @@ class SamaraReadingAgent(Processor):
 
         if action == "yes":
             place = profile.get("pending_place")
+            if not place and len(candidates) >= 1 and is_clear_place_winner(candidates):
+                place = candidates[0]
+                profile["pending_place"] = place
             if not place and len(candidates) == 1:
                 place = candidates[0]
                 profile["pending_place"] = place
             if not place:
-                # Ambiguous — re-show candidates
+                # Ambiguous — open list instead of truncated buttons
                 data["bot_response"] = [
-                    place_confirm_buttons(
+                    place_confirm_ui(
                         display=(candidates[0]["display"] if candidates else "that place"),
                         candidates=candidates or None,
+                        force_list=bool(candidates),
                     )
                 ]
                 return data
@@ -2167,15 +2178,31 @@ class SamaraReadingAgent(Processor):
                 data, profile, phone_number
             )
 
+        if action == "others":
+            # Clear-winner declined → show full list (dropdown)
+            if candidates:
+                profile["pending_place"] = None
+                data["bot_response"] = [
+                    place_confirm_ui(
+                        display=candidates[0]["display"],
+                        candidates=candidates,
+                        force_list=True,
+                    )
+                ]
+                return data
+            data["bot_response"] = [{"type": "text", "text": PLACE_RETYPE_TEXT}]
+            return data
+
         if action == "no":
             profile["place_attempts"] = int(profile.get("place_attempts") or 0) + 1
             profile["pending_place"] = None
             if int(profile["place_attempts"]) >= 3 and candidates:
                 data["bot_response"] = [
                     {"type": "text", "text": PLACE_MAX_ATTEMPTS_TEXT},
-                    place_confirm_buttons(
+                    place_confirm_ui(
                         display=candidates[0]["display"],
                         candidates=candidates,
+                        force_list=True,
                     ),
                 ]
                 return data
@@ -2191,13 +2218,22 @@ class SamaraReadingAgent(Processor):
                 data, profile, phone_number, inbound_id, text_body, retype=True
             )
 
-        # Unrecognised — re-offer
-        pending = profile.get("pending_place") or (candidates[0] if candidates else None)
-        if pending:
+        # Unrecognised — re-offer hybrid UI
+        pending = profile.get("pending_place")
+        if not pending and len(candidates) == 1:
+            pending = candidates[0]
+        if candidates or pending:
+            disp = (
+                (pending.get("display") if isinstance(pending, dict) else None)
+                or (candidates[0]["display"] if candidates else None)
+                or "that place"
+            )
             data["bot_response"] = [
-                place_confirm_buttons(
-                    display=pending.get("display") or "that place",
+                place_confirm_ui(
+                    display=disp,
                     candidates=candidates if len(candidates) >= 2 else None,
+                    force_list=len(candidates) >= 2
+                    and not is_clear_place_winner(candidates),
                 )
             ]
         else:
