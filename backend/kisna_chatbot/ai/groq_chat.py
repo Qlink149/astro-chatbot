@@ -88,6 +88,8 @@ class GroqChatProvider(ChatProvider):
         }
         if request.tools:
             request_kwargs["tools"] = request.tools
+        if request.temperature is not None:
+            request_kwargs["temperature"] = float(request.temperature)
 
         last_error: Exception | None = None
         keys_tried_this_attempt = 0

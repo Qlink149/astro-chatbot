@@ -32,6 +32,7 @@ class CompletionRequest:
     max_output_tokens: int = 1024
     phone_number: str | None = None
     client_id: str | None = None
+    temperature: float | None = None
 
 
 @dataclass

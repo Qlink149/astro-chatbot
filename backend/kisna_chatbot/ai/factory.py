@@ -98,6 +98,7 @@ async def complete_chat(
     client_id: str | None = None,
     model: str | None = None,
     model_fallback: str | None = None,
+    temperature: float | None = None,
 ) -> str:
     """
     Run a chat completion for the given agent using configured provider(s).
@@ -117,6 +118,7 @@ async def complete_chat(
             max_output_tokens=max_output_tokens or resolve_max_tokens(agent),
             phone_number=phone_number,
             client_id=client_id,
+            temperature=temperature,
         )
         return await provider.complete(request)
 

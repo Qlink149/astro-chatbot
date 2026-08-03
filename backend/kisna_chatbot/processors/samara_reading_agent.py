@@ -1205,21 +1205,59 @@ class SamaraReadingAgent(Processor):
         max_output_tokens: int,
         purpose: str = "beat1",
         use_sonnet: bool | None = None,
+        profile: dict | None = None,
+        archetype_prefer: str | None = None,
     ) -> str:
+        import os
+
         from kisna_chatbot.ai.samara_models import samara_model_for
+        from kisna_chatbot.utils.samara_variety import (
+            choose_archetype,
+            record_outbound_variety,
+            variety_prompt_block,
+        )
 
         if use_sonnet is not None:
             purpose = "beat1" if use_sonnet else "muhurat"
         primary, fallback = samara_model_for(purpose)  # type: ignore[arg-type]
+
+        reading_purposes = {
+            "beat1",
+            "beat2",
+            "beat2a",
+            "beat2b",
+            "beat2c",
+            "beat4",
+            "paid_deep",
+            "followup",
+            "solicited",
+        }
+        temperature = None
+        final_instruction = instruction
+        chosen_arch = None
+        if purpose in reading_purposes:
+            try:
+                temperature = float(os.getenv("SAMARA_CHAT_TEMPERATURE", "0.9"))
+            except ValueError:
+                temperature = 0.9
+            if profile is not None:
+                chosen_arch = choose_archetype(
+                    profile, prefer=archetype_prefer  # type: ignore[arg-type]
+                )
+                final_instruction = (
+                    instruction + "\n\n" + variety_prompt_block(profile, chosen_arch)
+                )
+
         kwargs = {
             "agent": AgentName.GENERAL,
             "agent_display_name": agent_display_name,
-            "instruction": instruction,
+            "instruction": final_instruction,
             "messages": [{"role": "user", "content": user_content}],
             "max_output_tokens": max_output_tokens,
             "phone_number": phone_number,
             "client_id": "samara",
             "model": primary,
+            "temperature": temperature,
         }
         if fallback:
             kwargs["model_fallback"] = fallback
@@ -1233,6 +1271,8 @@ class SamaraReadingAgent(Processor):
                     "agent": agent_display_name,
                 },
             )
+        if profile is not None and chosen_arch is not None:
+            record_outbound_variety(profile, clean, chosen_arch)
         return clean
 
     async def _after_language_chosen(
@@ -1323,6 +1363,7 @@ class SamaraReadingAgent(Processor):
                 agent_display_name="SamaraBeat1",
                 max_output_tokens=400,
                 purpose="beat1",
+                profile=profile,
             )
         except Exception:
             logger.exception("Beat1 LLM failed", extra={"phone_number": phone_number})
@@ -1409,6 +1450,7 @@ class SamaraReadingAgent(Processor):
                 agent_display_name="SamaraBeat2",
                 max_output_tokens=500,
                 purpose="beat2",
+                profile=profile,
             )
         except Exception:
             logger.exception("Beat2 LLM failed", extra={"phone_number": phone_number})
@@ -1454,6 +1496,7 @@ class SamaraReadingAgent(Processor):
                 agent_display_name="SamaraBeat2a",
                 max_output_tokens=400,
                 purpose="beat2a",
+                profile=profile,
             )
         except Exception:
             logger.exception("Beat2a LLM failed", extra={"phone_number": phone_number})
@@ -1537,6 +1580,8 @@ class SamaraReadingAgent(Processor):
                 agent_display_name="SamaraBeat2b",
                 max_output_tokens=400,
                 purpose="beat2b",
+                profile=profile,
+                archetype_prefer="question",
             )
         except Exception:
             logger.exception("Beat2b LLM failed", extra={"phone_number": phone_number})
@@ -1615,6 +1660,7 @@ class SamaraReadingAgent(Processor):
                 agent_display_name="SamaraBeat2c",
                 max_output_tokens=400,
                 purpose="beat2c",
+                profile=profile,
             )
         except Exception:
             logger.exception("Beat2c LLM failed", extra={"phone_number": phone_number})
@@ -1675,6 +1721,7 @@ class SamaraReadingAgent(Processor):
                 agent_display_name="SamaraBeat4",
                 max_output_tokens=600,
                 purpose="beat4",
+                profile=profile,
             )
         except Exception:
             logger.exception("Beat4 LLM failed", extra={"phone_number": phone_number})

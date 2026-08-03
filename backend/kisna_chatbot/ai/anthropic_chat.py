@@ -72,12 +72,15 @@ class AnthropicChatProvider:
         last_error: Exception | None = None
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                response = await self._client.messages.create(
-                    model=self._model,
-                    system=request.instruction,
-                    messages=api_messages,
-                    max_tokens=max(1, int(request.max_output_tokens or 1024)),
-                )
+                create_kwargs = {
+                    "model": self._model,
+                    "system": request.instruction,
+                    "messages": api_messages,
+                    "max_tokens": max(1, int(request.max_output_tokens or 1024)),
+                }
+                if request.temperature is not None:
+                    create_kwargs["temperature"] = float(request.temperature)
+                response = await self._client.messages.create(**create_kwargs)
                 # Anthropic returns a list of content blocks; join text blocks.
                 parts = []
                 for block in getattr(response, "content", []) or []:
