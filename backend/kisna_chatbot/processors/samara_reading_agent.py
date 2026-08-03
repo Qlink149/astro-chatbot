@@ -1216,6 +1216,7 @@ class SamaraReadingAgent(Processor):
             record_outbound_variety,
             variety_prompt_block,
         )
+        from kisna_chatbot.utils.samara_focus import focus_prompt_block
 
         if use_sonnet is not None:
             purpose = "beat1" if use_sonnet else "muhurat"
@@ -1245,7 +1246,11 @@ class SamaraReadingAgent(Processor):
                     profile, prefer=archetype_prefer  # type: ignore[arg-type]
                 )
                 final_instruction = (
-                    instruction + "\n\n" + variety_prompt_block(profile, chosen_arch)
+                    instruction
+                    + "\n\n"
+                    + focus_prompt_block(profile)
+                    + "\n\n"
+                    + variety_prompt_block(profile, chosen_arch)
                 )
 
         kwargs = {
@@ -1273,6 +1278,9 @@ class SamaraReadingAgent(Processor):
             )
         if profile is not None and chosen_arch is not None:
             record_outbound_variety(profile, clean, chosen_arch)
+            from kisna_chatbot.utils.samara_focus import update_focus_after_bot
+
+            update_focus_after_bot(profile, text=clean)
         return clean
 
     async def _after_language_chosen(
@@ -1598,6 +1606,18 @@ class SamaraReadingAgent(Processor):
         next_beat = BEAT_2B_ALT_AWAITING if alt else BEAT_2B_AWAITING_CONFIRM
         mark_beat_send(profile, next_beat, inbound_id)
         emit_funnel_event("beat_2b_date_offered", phone_number=phone_number)
+        from kisna_chatbot.utils.samara_focus import update_focus_after_bot
+
+        month_lab = (
+            window.get("window_label_month_en") or window.get("window_label_en") or ""
+        )
+        update_focus_after_bot(
+            profile,
+            text=text,
+            claim=f"turning point around {month_lab}".strip(),
+            dates=[start] if start else None,
+            awaiting="confirmation_of_dated_anchor",
+        )
         data["bot_response"] = chunks
         return data
 

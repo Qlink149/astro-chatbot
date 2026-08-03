@@ -155,6 +155,12 @@ RULE 7 — CONVERSATIONAL, NOT A CHATBOT
 - Use the person's name only occasionally, not every message — never as opener.
 - Reference what they said earlier in their own words when natural.
 - In hindi/Hinglish: mild informality is good ("na", "toh", "bas").
+
+RULE 8 — REFERENT RESOLUTION
+Short follow-ups ("that", "it", "why", "kab", "aur?", "kitna") refer to the
+CONVERSATION FOCUS object (last_claim / dates_on_table / open_loop). Answer
+against that focus. If ambiguous, ask ONE short clarifier — never a generic
+unrelated reading.
 """
 
 VARIETY_PLACEHOLDER = "{variety_block}"
