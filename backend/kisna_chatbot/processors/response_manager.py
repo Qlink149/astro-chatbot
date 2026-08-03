@@ -16,7 +16,16 @@ from kisna_chatbot.whatsapp_functions.send_text_message import (
 from kisna_chatbot.whatsapp_functions.send_cta_url import send_cta_url
 from kisna_chatbot.utils.logger_config import logger
 from kisna_chatbot.utils.rate_limiter import outbound_rate_limiter
+import random
 import time
+
+
+def _human_typing_delay_seconds(text: str) -> float:
+    """Variable pause before send — human pace, capped at ~4s."""
+    chars = len(text or "")
+    base = 0.4 + (chars / 40.0)
+    jitter = random.uniform(0.0, 0.4)
+    return min(4.0, base + jitter)
 
 
 class ResponseManager:
@@ -50,6 +59,12 @@ class ResponseManager:
         for response in bot_responses:
             outbound_rate_limiter.wait_if_needed(phone_number)
             response_type = response.get("type")
+            # Human-ish typing pause for text / quickreply (cap ~4s).
+            if response_type in ("text", "quickreply"):
+                preview = str(
+                    response.get("text") or response.get("body") or ""
+                )
+                time.sleep(_human_typing_delay_seconds(preview))
             handler = self._handlers.get(response_type)
 
             if handler:
