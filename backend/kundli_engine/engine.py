@@ -402,6 +402,12 @@ def compute_chart(birth: BirthDetails) -> dict:
                 f"{birth.hour:02d}:{birth.minute:02d}" if birth.has_time else None
             ),
             "dated_anchors_available": dated_anchors_available,
+            "claim_confidence": {
+                "has_birth_time": bool(birth.has_time),
+                "houses_lagna": "high" if birth.has_time else "low",
+                "dasha_timing": "high" if birth.has_time else "medium",
+                "moon_nakshatra": "high",
+            },
         },
         "lagna": lagna_out if birth.has_time else None,
         "rashi": rashi,               # Moon sign

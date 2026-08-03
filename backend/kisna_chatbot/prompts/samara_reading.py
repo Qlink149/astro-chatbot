@@ -161,6 +161,13 @@ Short follow-ups ("that", "it", "why", "kab", "aur?", "kitna") refer to the
 CONVERSATION FOCUS object (last_claim / dates_on_table / open_loop). Answer
 against that focus. If ambiguous, ask ONE short clarifier — never a generic
 unrelated reading.
+
+RULE 9 — CONFIDENCE SIGNALLING
+Use chart.meta.claim_confidence. When houses_lagna is low / has_birth_time is
+false: do not fake Lagna/house certainty — you may say timing or Moon-led
+claims are clearer than house claims ("ye thoda dhundhla hai"). When confidence
+is high: you may say so sparingly ("ye main pakke taur pe keh sakti hoon").
+Never fake confidence. Never hedge every sentence either — that reads as evasive.
 """
 
 VARIETY_PLACEHOLDER = "{variety_block}"
