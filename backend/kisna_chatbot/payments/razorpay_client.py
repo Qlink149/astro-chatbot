@@ -78,9 +78,14 @@ def create_payment_link(
     """Create a Razorpay payment link. Amount is converted to paise."""
     from kisna_chatbot.utils.logger_config import logger
 
+    from kisna_chatbot.utils.pwyw_amount import min_payment_inr
+
     amount_paise = int(round(float(amount_in_rupees) * 100))
-    if amount_paise < 100:
-        raise ValueError("amount_in_rupees must be at least 1.00 INR")
+    min_paise = int(round(min_payment_inr() * 100))
+    if amount_paise < min_paise:
+        raise ValueError(
+            f"amount_in_rupees must be at least {min_payment_inr():g} INR"
+        )
 
     customer_payload = {
         k: v

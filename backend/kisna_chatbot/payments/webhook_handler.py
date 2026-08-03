@@ -12,9 +12,11 @@ from kisna_chatbot.database.payments import (
 )
 from kisna_chatbot.utils.funnel_events import emit_funnel_event
 from kisna_chatbot.utils.logger_config import logger
-
-
-CREDITS_PER_TEST_PAYMENT = 10
+from kisna_chatbot.utils.pwyw_amount import (
+    credits_for_amount,
+    format_inr,
+    min_payment_inr,
+)
 
 
 def _entity_payload(event: dict[str, Any]) -> dict[str, Any]:
@@ -46,6 +48,26 @@ def _razorpay_payment_id(entity: dict[str, Any], event: dict[str, Any]) -> str:
             if str(pid).startswith("pay_"):
                 return str(pid)
     return str(entity.get("id") or "")
+
+
+def _paid_amount_paise(entity: dict[str, Any], event: dict[str, Any]) -> int | None:
+    """Paid amount in paise from payment_link or payment entity."""
+    for key in ("amount_paid", "amount"):
+        raw = entity.get(key)
+        if raw is not None:
+            try:
+                return int(raw)
+            except (TypeError, ValueError):
+                pass
+    payload = event.get("payload") or {}
+    payment = payload.get("payment") or {}
+    pe = payment.get("entity") if isinstance(payment, dict) and "entity" in payment else payment
+    if isinstance(pe, dict) and pe.get("amount") is not None:
+        try:
+            return int(pe["amount"])
+        except (TypeError, ValueError):
+            return None
+    return None
 
 
 def handle_razorpay_event(event: dict[str, Any]) -> dict[str, Any]:
@@ -102,10 +124,48 @@ def _handle_payment_link_paid(
 
     already_granted = existing.get("credits_granted_payment_id") == payment_id
 
+    paid_paise = _paid_amount_paise(entity, event)
+    expected_paise = existing.get("amount_paise")
+    try:
+        expected_paise_i = int(expected_paise) if expected_paise is not None else None
+    except (TypeError, ValueError):
+        expected_paise_i = None
+
+    min_paise = int(round(min_payment_inr() * 100))
+    amount_ok = True
+    if paid_paise is None:
+        logger.error(
+            "PAYMENT_AMOUNT_ALERT: missing paid amount on webhook",
+            extra={"payment_link_id": payment_link_id, "payment_id": payment_id},
+        )
+        amount_ok = False
+    elif expected_paise_i is not None and abs(paid_paise - expected_paise_i) > 1:
+        logger.error(
+            "PAYMENT_AMOUNT_ALERT: paid amount mismatch vs stored link",
+            extra={
+                "payment_link_id": payment_link_id,
+                "payment_id": payment_id,
+                "paid_paise": paid_paise,
+                "expected_paise": expected_paise_i,
+            },
+        )
+        amount_ok = False
+    elif paid_paise < min_paise:
+        logger.error(
+            "PAYMENT_AMOUNT_ALERT: paid below PWYW minimum",
+            extra={
+                "payment_link_id": payment_link_id,
+                "payment_id": payment_id,
+                "paid_paise": paid_paise,
+                "min_paise": min_paise,
+            },
+        )
+        amount_ok = False
+
     update_payment_by_link_id(
         payment_link_id,
         {
-            "status": "paid",
+            "status": "paid" if amount_ok else "paid_amount_rejected",
             "paid_at": int(time.time()),
             "last_event": "payment_link.paid",
             "razorpay_payment_id": payment_id,
@@ -115,14 +175,29 @@ def _handle_payment_link_paid(
                 "amount_paid": entity.get("amount_paid"),
                 "status": entity.get("status"),
             },
+            "verified_paid_paise": paid_paise,
+            "amount_verify_ok": amount_ok,
         },
     )
+
+    if not amount_ok:
+        return {
+            "ok": True,
+            "event": "payment_link.paid",
+            "payment_link_id": payment_link_id,
+            "payment_id": payment_id,
+            "credits_granted": False,
+            "amount_rejected": True,
+        }
 
     phone = str(existing.get("phone_number") or "")
     client_id = str(existing.get("client_id") or "samara")
     notes = existing.get("notes") or {}
     if not phone:
         phone = str(notes.get("phone_number") or "")
+
+    verified_inr = (paid_paise or 0) / 100.0
+    credits = credits_for_amount(verified_inr)
 
     credits_granted = False
     if phone and not already_granted:
@@ -137,7 +212,7 @@ def _handle_payment_link_paid(
         updated = grant_credits_for_payment(
             phone_number=phone,
             client_id=client_id,
-            credits=CREDITS_PER_TEST_PAYMENT,
+            credits=credits,
             payment_id=payment_id,
         )
         after_bal = get_credit_balance(updated or before_user)
@@ -145,12 +220,20 @@ def _handle_payment_link_paid(
 
         update_payment_by_link_id(
             payment_link_id,
-            {"credits_granted_payment_id": payment_id},
+            {
+                "credits_granted_payment_id": payment_id,
+                "credits_granted": credits,
+            },
         )
 
         if credits_granted:
             emit_funnel_event("payment_succeeded", phone_number=phone)
-            _send_payment_confirmation_and_resume(phone, client_id)
+            _send_payment_confirmation_and_resume(
+                phone,
+                client_id,
+                amount_inr=verified_inr,
+                credits=credits,
+            )
 
     return {
         "ok": True,
@@ -158,10 +241,17 @@ def _handle_payment_link_paid(
         "payment_link_id": payment_link_id,
         "payment_id": payment_id,
         "credits_granted": credits_granted,
+        "credits": credits,
     }
 
 
-def _send_payment_confirmation_and_resume(phone_number: str, client_id: str) -> None:
+def _send_payment_confirmation_and_resume(
+    phone_number: str,
+    client_id: str,
+    *,
+    amount_inr: float,
+    credits: int,
+) -> None:
     """Confirm payment and resume the pending / open-loop question."""
     try:
         from kisna_chatbot.database.collections import users
@@ -171,8 +261,9 @@ def _send_payment_confirmation_and_resume(phone_number: str, client_id: str) -> 
 
         from kisna_chatbot.utils.samara_beats import text_responses
 
+        amt = format_inr(amount_inr)
         confirm_msg = (
-            "Payment mil gaya 🙏 Credits add ho gaye hain. "
+            f"₹{amt} mila — {credits} sawaal add ho gaye 🙏 "
             "Main wahi baat aage badhati hoon — aapko sawaal dobara nahi likhna. 🌙"
         )
         for chunk in text_responses(confirm_msg):

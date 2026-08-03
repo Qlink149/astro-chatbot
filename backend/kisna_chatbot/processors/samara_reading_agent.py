@@ -66,6 +66,8 @@ from kisna_chatbot.utils.samara_beats import (
     BEAT_AWAITING_LANGUAGE,
     BEAT_AWAITING_NAME,
     BEAT_AWAITING_PLACE_CONFIRM,
+    BEAT_AWAITING_PWYW_AMOUNT,
+    BEAT_AWAITING_PWYW_CONFIRM,
     BEAT_AWAITING_TOPIC,
     BEAT_POST_FREE_DEEP,
     BEAT_RETURNING_MENU,
@@ -94,12 +96,14 @@ from kisna_chatbot.utils.samara_beats import (
     parse_paywall_choice,
     parse_pay_intent,
     parse_place_confirm,
+    parse_pwyw_confirm,
     parse_returning_choice,
     parse_topic_choice,
     parse_want_more_choice,
     parse_yes_no_freetext,
     paywall_buttons,
     place_confirm_buttons,
+    pwyw_confirm_buttons,
     looks_like_broke_objection,
     relevant_dasha_slice,
     returning_menu_buttons,
@@ -175,13 +179,13 @@ NAME_ASK_TEXT_EN = "What should I call you? 🌙"
 # First-gate / door — never meter consumption language as primary.
 PAYWALL_TEXT_HI = (
     "Woh jawab poora hai 🌙 "
-    "Chart ke clear windows aur poori tasveer — jab ready ho unlock kariye.\n\n"
-    "Neeche se aage badhein, ya Baad mein — bilkul theek hai."
+    "Chart ke clear windows aur poori tasveer — jab ready ho.\n\n"
+    "Jo dena chaho type karo (minimum ₹39), ya Baad mein — bilkul theek hai."
 )
 PAYWALL_TEXT_EN = (
     "That answer stands on its own 🌙 "
     "The clearer windows and full picture are here when you're ready.\n\n"
-    "Continue below, or Later — both are fine."
+    "Type an amount (minimum ₹39), or Later — both are fine."
 )
 # Back-compat alias (tests / grep); must NOT contain "coming soon" or "last credit".
 PAYWALL_TEXT = PAYWALL_TEXT_HI
@@ -654,13 +658,37 @@ class SamaraReadingAgent(Processor):
                     data, profile, phone_number, inbound_text
                 )
 
-        # Exact PAY or natural-language pay intent → Razorpay CTA
+        # Exact PAY or natural-language pay intent → PWYW amount ask
         if messages.get("type") == "text":
             text_body = ((messages.get("text") or {}).get("body") or "")
             if text_body.strip() == "PAY" or parse_pay_intent(messages):
-                return await self._handle_pay_command(data, profile, phone_number)
+                return self._enter_pwyw_amount(data, profile, phone_number)
         elif parse_pay_intent(messages) or parse_paywall_choice(messages) == "pay":
-            return await self._handle_pay_command(data, profile, phone_number)
+            return self._enter_pwyw_amount(data, profile, phone_number)
+
+        # PWYW amount / large-amount confirm beats
+        beat_pay = profile.get("conversation_beat")
+        if beat_pay in (BEAT_AWAITING_PWYW_AMOUNT, BEAT_AWAITING_PWYW_CONFIRM):
+            return await self._handle_pwyw_beat(
+                data, profile, phone_number, messages
+            )
+
+        # After door: typed amount without explicit PAY keyword
+        if (
+            _is_post_gate_locked(profile)
+            and not profile.get("bot_asked_question")
+            and messages.get("type") == "text"
+        ):
+            from kisna_chatbot.utils.pwyw_amount import parse_amount_inr
+
+            raw_amt = ((messages.get("text") or {}).get("body") or "").strip()
+            if parse_amount_inr(raw_amt) is not None and not looks_like_broke_objection(
+                raw_amt
+            ):
+                profile["conversation_beat"] = BEAT_AWAITING_PWYW_AMOUNT
+                return await self._handle_pwyw_beat(
+                    data, profile, phone_number, messages
+                )
 
         # Baad mein — graceful exit, schedule one-shot nudge
         if parse_paywall_choice(messages) == "later":
@@ -1684,23 +1712,137 @@ class SamaraReadingAgent(Processor):
         mark_beat_send(profile, BEAT_AWAITING_TOPIC)
         return self._send_topic_picker(data, profile)
 
-    async def _handle_pay_command(
+    def _enter_pwyw_amount(
         self, data: dict, profile: dict, phone_number: str
+    ) -> dict:
+        from kisna_chatbot.utils.pwyw_amount import format_inr, min_payment_inr
+
+        lang = _lang(profile)
+        min_s = format_inr(min_payment_inr())
+        profile["conversation_beat"] = BEAT_AWAITING_PWYW_AMOUNT
+        profile.pop("pending_pwyw_amount", None)
+        if lang == "english":
+            body = (
+                f"Pay what you want — minimum ₹{min_s}. "
+                f"Type an amount (e.g. {min_s} or 99)."
+            )
+        else:
+            body = (
+                f"Jo dena chaho — minimum ₹{min_s}. "
+                f"Amount type karo (jaise {min_s} ya 99)."
+            )
+        data["bot_response"] = [
+            paywall_buttons(lang=lang, body=body, amount_inr=min_payment_inr())
+        ]
+        emit_funnel_event("pwyw_amount_asked", phone_number=phone_number)
+        return data
+
+    async def _handle_pwyw_beat(
+        self, data: dict, profile: dict, phone_number: str, messages: dict
+    ) -> dict:
+        if parse_paywall_choice(messages) == "later":
+            return self._handle_paywall_later(data, profile, phone_number)
+
+        beat = profile.get("conversation_beat")
+        if beat == BEAT_AWAITING_PWYW_CONFIRM:
+            choice = parse_pwyw_confirm(messages)
+            if choice == "yes":
+                amount = float(profile.get("pending_pwyw_amount") or 0)
+                if amount <= 0:
+                    return self._enter_pwyw_amount(data, profile, phone_number)
+                return await self._create_pwyw_payment_link(
+                    data, profile, phone_number, amount
+                )
+            if choice == "no":
+                return self._enter_pwyw_amount(data, profile, phone_number)
+            # Unclear — re-show confirm
+            amount = float(profile.get("pending_pwyw_amount") or 0)
+            return self._ask_pwyw_large_confirm(data, profile, amount)
+
+        from kisna_chatbot.utils.pwyw_amount import check_amount, format_inr, min_payment_inr
+
+        raw = ""
+        if messages.get("type") == "text":
+            raw = ((messages.get("text") or {}).get("body") or "").strip()
+        if not raw and isinstance(messages, dict):
+            # Button title fallback (legacy pay labels)
+            interactive = messages.get("interactive") or messages.get("button") or {}
+            if isinstance(interactive, dict):
+                raw = str(
+                    interactive.get("title")
+                    or interactive.get("text")
+                    or (interactive.get("button_reply") or {}).get("title")
+                    or ""
+                ).strip()
+            list_reply = (messages.get("interactive") or {}).get("list_reply") or {}
+            if not raw and isinstance(list_reply, dict):
+                raw = str(list_reply.get("title") or "").strip()
+
+        checked = check_amount(raw)
+        lang = _lang(profile)
+        min_s = format_inr(min_payment_inr())
+
+        if checked.verdict == "unparseable":
+            body = (
+                f"I didn't catch the amount — try something like {min_s} or ₹99."
+                if lang == "english"
+                else f"Amount samajh nahi aaya — jaise {min_s} ya ₹99 type karo."
+            )
+            data["bot_response"] = [{"type": "text", "text": body}]
+            return data
+
+        if checked.verdict == "under_min":
+            body = (
+                f"Minimum is ₹{min_s} — type that or a little more when you're ready."
+                if lang == "english"
+                else f"Minimum ₹{min_s} hai — utna ya thoda zyada type karo."
+            )
+            data["bot_response"] = [{"type": "text", "text": body}]
+            return data
+
+        amount = float(checked.amount_inr or 0)
+        if checked.verdict == "needs_confirm":
+            profile["pending_pwyw_amount"] = amount
+            return self._ask_pwyw_large_confirm(data, profile, amount)
+
+        return await self._create_pwyw_payment_link(
+            data, profile, phone_number, amount
+        )
+
+    def _ask_pwyw_large_confirm(
+        self, data: dict, profile: dict, amount: float
+    ) -> dict:
+        from kisna_chatbot.utils.pwyw_amount import credits_for_amount, format_inr
+
+        lang = _lang(profile)
+        amt = format_inr(amount)
+        credits = credits_for_amount(amount)
+        profile["conversation_beat"] = BEAT_AWAITING_PWYW_CONFIRM
+        profile["pending_pwyw_amount"] = amount
+        if lang == "english":
+            body = f"₹{amt} — is that right? That unlocks about {credits} deep answers."
+        else:
+            body = f"₹{amt} — sahi hai? Isse lagbhag {credits} deep sawaal milenge."
+        data["bot_response"] = [pwyw_confirm_buttons(lang=lang, body=body)]
+        return data
+
+    async def _create_pwyw_payment_link(
+        self, data: dict, profile: dict, phone_number: str, amount: float
     ) -> dict:
         try:
             from kisna_chatbot.payments.razorpay_client import keys_configured
             from kisna_chatbot.payments.service import (
                 create_and_store_payment_link,
                 make_samara_order_id,
-                test_payment_amount_inr,
             )
+            from kisna_chatbot.utils.pwyw_amount import credits_for_amount, format_inr
 
             if not keys_configured():
                 raise RuntimeError(
                     "RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET missing on this deployment"
                 )
 
-            amount = test_payment_amount_inr()
+            credits = credits_for_amount(amount)
             order_id = make_samara_order_id(phone_number)
             customer_name = (
                 profile.get("username") or profile.get("name") or "Samara user"
@@ -1716,22 +1858,28 @@ class SamaraReadingAgent(Processor):
                 notes={
                     "client_id": "samara",
                     "phone_number": phone_number,
-                    "source": "whatsapp_PAY",
+                    "source": "whatsapp_pwyw",
+                    "expected_credits": str(credits),
                 },
                 phone_number=phone_number,
                 client_id="samara",
-                description=f"Samara credits — ₹{amount:g}",
+                description=f"Samara credits — ₹{format_inr(amount)}",
             )
-            amount_display = (
-                str(int(amount)) if float(amount).is_integer() else f"{amount:g}"
-            )
+            profile["conversation_beat"] = BEAT_POST_FREE_DEEP
+            profile.pop("pending_pwyw_amount", None)
+            amount_display = format_inr(amount)
             emit_funnel_event("pay_link_created", phone_number=phone_number)
             data["bot_response"] = [
                 {
                     "type": "cta_url",
                     "text": (
-                        f"Click below to complete your payment of ₹{amount_display} "
-                        f"for Samara — 10 deep chart answers."
+                        f"Click below to pay ₹{amount_display} — "
+                        f"{credits} deep chart answers."
+                        if _lang(profile) == "english"
+                        else (
+                            f"Neeche se ₹{amount_display} complete kariye — "
+                            f"{credits} deep chart jawab."
+                        )
                     ),
                     "display_text": "Pay Now",
                     "url": result["short_url"],
@@ -1739,7 +1887,7 @@ class SamaraReadingAgent(Processor):
             ]
         except Exception as exc:
             logger.exception(
-                "PAY command failed: %s: %s",
+                "PWYW payment link failed: %s: %s",
                 type(exc).__name__,
                 exc,
                 extra={"phone_number": phone_number},
@@ -1748,6 +1896,12 @@ class SamaraReadingAgent(Processor):
                 {"type": "text", "text": ERROR_TEXT_PAYMENT_LINK}
             ]
         return data
+
+    async def _handle_pay_command(
+        self, data: dict, profile: dict, phone_number: str
+    ) -> dict:
+        """Legacy entry — routes to PWYW amount ask."""
+        return self._enter_pwyw_amount(data, profile, phone_number)
 
     async def _handle_birth_details(
         self, data: dict, profile: dict, phone_number: str, flow_data: dict

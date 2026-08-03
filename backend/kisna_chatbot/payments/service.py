@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import time
 from typing import Any, Optional
 
@@ -12,11 +11,10 @@ from kisna_chatbot.utils.logger_config import logger
 
 
 def test_payment_amount_inr() -> float:
-    raw = (os.getenv("SAMARA_TEST_PAYMENT_AMOUNT_INR") or "49").strip()
-    try:
-        return float(raw)
-    except ValueError:
-        return 49.0
+    """Door / PWYW floor — SAMARA_MIN_PAYMENT_INR (default 39)."""
+    from kisna_chatbot.utils.pwyw_amount import min_payment_inr
+
+    return min_payment_inr()
 
 
 def create_and_store_payment_link(
@@ -35,11 +33,21 @@ def create_and_store_payment_link(
 
     Returns: { payment_link_id, short_url, order_id }
     """
+    from kisna_chatbot.utils.pwyw_amount import credits_for_amount, min_payment_inr
+
+    min_inr = min_payment_inr()
+    if float(amount_in_rupees) + 1e-9 < min_inr:
+        raise ValueError(
+            f"amount_in_rupees must be at least {min_inr:g} INR (PWYW floor)"
+        )
+
     notes = dict(notes or {})
     notes.setdefault("order_id", order_id)
     if phone_number:
         notes.setdefault("phone_number", phone_number)
     notes.setdefault("client_id", client_id)
+    notes.setdefault("expected_credits", str(credits_for_amount(amount_in_rupees)))
+    notes.setdefault("amount_inr", str(amount_in_rupees))
 
     result = create_payment_link(
         order_id=order_id,

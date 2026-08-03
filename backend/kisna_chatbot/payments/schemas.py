@@ -15,7 +15,7 @@ class PaymentCustomer(BaseModel):
 
 class CreatePaymentLinkRequest(BaseModel):
     order_id: str = Field(..., min_length=1, max_length=128)
-    amount_in_rupees: float = Field(..., gt=0)
+    amount_in_rupees: float = Field(..., gt=0, description="INR; server enforces PWYW min")
     currency: str = Field(default="INR", min_length=3, max_length=3)
     customer: PaymentCustomer
     notes: Optional[dict[str, Any]] = None

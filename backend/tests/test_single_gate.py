@@ -56,7 +56,7 @@ def test_door_body_has_no_meter_language():
             "chart_json": MIN_CHART,
             "chosen_topic": "career",
         },
-        amount_inr=49,
+        amount_inr=39,
     ).lower()
     assert "last credit" not in body
     assert "one free deep" not in body

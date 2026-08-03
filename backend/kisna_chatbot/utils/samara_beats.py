@@ -22,6 +22,8 @@ BEAT_2B_ALT_AWAITING = "beat2b_alt_awaiting"
 BEAT_2C_AWAITING_DETAIL = "beat2c_awaiting_detail"
 BEAT_AWAITING_TOPIC = "awaiting_topic"
 BEAT_POST_FREE_DEEP = "post_free_deep"
+BEAT_AWAITING_PWYW_AMOUNT = "awaiting_pwyw_amount"
+BEAT_AWAITING_PWYW_CONFIRM = "awaiting_pwyw_confirm"
 BEAT_RETURNING_MENU = "returning_menu"
 BEAT_TRUST_RECOVERY = "trust_recovery"
 
@@ -65,8 +67,10 @@ BTN_TOPIC_DECISION = "samara_topic_decision"
 BTN_RET_CONTINUE = "samara_ret_continue"
 BTN_RET_NEW = "samara_ret_new"
 BTN_RET_MUHURAT = "samara_ret_muhurat"
-BTN_PAYWALL_PAY = "samara_paywall_pay"
+BTN_PAYWALL_PAY = "samara_paywall_pay"  # legacy — maps to PWYW amount ask
 BTN_PAYWALL_LATER = "samara_paywall_later"
+BTN_PWYW_CONFIRM_YES = "samara_pwyw_yes"
+BTN_PWYW_CONFIRM_NO = "samara_pwyw_no"
 BTN_WANT_MORE = "samara_want_more"
 BTN_ENOUGH_FOR_NOW = "samara_enough_for_now"
 
@@ -531,25 +535,50 @@ def returning_menu_buttons(
 
 
 def paywall_buttons(*, lang: str, body: str, amount_inr: float | None = None) -> dict:
-    from kisna_chatbot.payments.service import test_payment_amount_inr
-
-    amt = amount_inr if amount_inr is not None else test_payment_amount_inr()
-    amt_s = str(int(amt)) if float(amt).is_integer() else f"{amt:g}"
-    if lang == "english":
-        pay_t = f"See more — ₹{amt_s}"[:20]
-        later_t = "Later"
-    else:
-        pay_t = f"Haan — ₹{amt_s}"[:20]
-        later_t = "Baad mein"
+    """Door QR — Later only; user types PWYW amount (no fixed ₹ buttons)."""
+    later_t = "Later" if lang == "english" else "Baad mein"
     return _quickreply(
         body,
         "samara_paywall",
         [
-            {"type": "text", "title": pay_t, "postbackText": BTN_PAYWALL_PAY},
             {"type": "text", "title": later_t, "postbackText": BTN_PAYWALL_LATER},
         ],
         caption="Choose one",
     )
+
+
+def pwyw_confirm_buttons(*, lang: str, body: str) -> dict:
+    if lang == "english":
+        yes_t, no_t = "Yes, pay", "No, change amount"
+    else:
+        yes_t, no_t = "Haan, sahi hai", "Nahi, change"
+    return _quickreply(
+        body,
+        "samara_pwyw_confirm",
+        [
+            {"type": "text", "title": yes_t[:20], "postbackText": BTN_PWYW_CONFIRM_YES},
+            {"type": "text", "title": no_t[:20], "postbackText": BTN_PWYW_CONFIRM_NO},
+        ],
+        caption="Choose one",
+    )
+
+
+def parse_pwyw_confirm(messages: dict) -> str | None:
+    """Return 'yes' | 'no' | None for large-amount PWYW confirm."""
+    pid, title = _extract_postback(messages)
+    if pid == BTN_PWYW_CONFIRM_YES:
+        return "yes"
+    if pid == BTN_PWYW_CONFIRM_NO:
+        return "no"
+    body = title
+    if not body and isinstance(messages, dict) and messages.get("type") == "text":
+        body = ((messages.get("text") or {}).get("body") or "").strip().lower()
+    body = (body or "").strip().lower()
+    if body in ("yes", "haan", "ha", "sahi hai", "ok", "okay"):
+        return "yes"
+    if body in ("no", "nahi", "change", "nahi change"):
+        return "no"
+    return None
 
 
 def want_more_buttons(*, lang: str, body: str) -> dict:

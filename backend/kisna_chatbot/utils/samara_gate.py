@@ -106,24 +106,36 @@ def chart_door_windows(profile: dict, *, lang: str) -> str:
 
 
 def door_gate_body(profile: dict, *, amount_inr: float) -> str:
-    """Door framing — never meter/consumption language."""
+    """Door framing — PWYW invite; never meter/consumption language."""
+    from kisna_chatbot.utils.pwyw_amount import (
+        credits_for_amount,
+        format_inr,
+        rupees_per_credit,
+    )
+
     lang = "english" if (profile.get("user_language") or "") == "english" else "hindi"
     windows = chart_door_windows(profile, lang=lang)
-    amt = str(int(amount_inr)) if float(amount_inr).is_integer() else f"{amount_inr:g}"
+    amt = format_inr(amount_inr)
+    rate = format_inr(rupees_per_credit())
+    floor_credits = credits_for_amount(amount_inr)
     if lang == "english":
         return (
             "That answer stands on its own.\n\n"
             f"In your chart, clear windows show around {windows}. "
             "Which month matters most, what to lean into, and what to avoid — "
             "I can lay out that full picture when you're ready.\n\n"
-            f"See more for ₹{amt}, or later — both are fine."
+            f"Pay what you want — minimum ₹{amt} "
+            f"(about ₹{rate} per deep answer; at least {floor_credits} answers). "
+            f"Type an amount like {amt} when you're ready, or Later — both are fine."
         )
     return (
         "Woh jawab poora hai.\n\n"
         f"Aapke chart mein clear windows dikhte hain — {windows}. "
         "Kaun sa mahina, kya karna hai, aur kis cheez se bachna hai — "
         "woh poori tasveer main de sakti hoon jab aap ready ho.\n\n"
-        f"₹{amt} mein aage dekhte hain, ya baad mein — dono theek hain."
+        f"Jo dena chaho — minimum ₹{amt} "
+        f"(lagbhag ₹{rate} per deep jawab; kam se kam {floor_credits} sawaal). "
+        f"Amount type karo jaise {amt}, ya Baad mein — dono theek hain."
     )
 
 
