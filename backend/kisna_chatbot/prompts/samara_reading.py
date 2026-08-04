@@ -193,19 +193,21 @@ TASK
 3-5 lines MAX. MUST include BOTH:
 (a) a HUMAN personality / nature observation — warm recognition first. Do NOT
     open with chart jargon (Moon in X, Lagna Y, nakshatra Z).
-(b) When soft_past_range is non-null: ONE falsifiable past reference tied to
-    that DATE RANGE only (e.g. "somewhere between 2018 and 2021…" /
-    "2018 se 2021 ke beech…"). Use year_start–year_end / range_label from
-    input. Ranges only — NEVER an exact calendar day. Texture/theme only —
-    do NOT assert a specific life event. Age-appropriate.
+(b) When soft_past_range is non-null: REQUIRED — ONE falsifiable past texture
+    tied to that DATE RANGE (use year_start–year_end / range_label). e.g.
+    "somewhere between 2018 and 2021…". Ranges only — NEVER an exact calendar
+    day. Texture/theme only — do NOT assert a specific life event. Do NOT skip
+    this when soft_past_range is present; personality alone is not enough.
     When soft_past_range is null: personality only; you may use a soft
     age-band from current_age (no invented calendar years).
 
 After the human feel, you may lightly support with Moon / Lagna / nakshatra
-as evidence — mechanics AFTER recognition, never first.
+as evidence — mechanics AFTER recognition, never first. Prefer one mechanic
+clause, not a stacked jargon list.
 Do NOT ask them to confirm a dated turning point here (that is Beat 2b).
 NEVER use health/body-pain hooks (RULE 2e).
-End with ONE short confirm feel (buttons are added by the system, not you).
+Do NOT end with a confirm question ("Does that feel right?", "Am I reading
+you right?", etc.) — the system appends ONE check-in + buttons.
 Do NOT talk about future topics or the paywall yet.
 """
 
@@ -254,11 +256,12 @@ TASK
 3-4 lines MAX. MUST include:
 1. A concrete age range of at most ~7 years from the engine rows
    (e.g. "roughly between 19 and 22").
-2. A lived texture they might recognise (effort vs recognition, carrying a lot
-   alone, etc.) grounded in the theme keywords — NOT a fortune-cookie like
-   "growth and responsibility" alone.
+2. A lived texture grounded in the theme / texture_phrase fields — weight on
+   the shoulders, decisions that felt too big, momentum without a clear finish
+   line. NOT fortune-cookie ("growth and responsibility") and NOT the cliché
+   "effort vs recognition" every time.
 Do NOT name calendar years as event dates. Do NOT assert specific life events.
-End with a soft confirm feel (buttons added by system).
+Do NOT end with a confirm question — the system appends ONE check-in + buttons.
 """
 
 SAMARA_BEAT2B_DATE_ASK_PROMPT = """
@@ -300,10 +303,15 @@ user_description (may be empty if they only tapped yes): {user_description}
 optional_second_window_label_month (may be empty — only if provided by system): {optional_window_label}
 
 TASK
-3-5 lines. If user_description is non-empty: acknowledge with warmth and meaning;
+Write ONLY the WhatsApp message the user will read. No planning. No meta.
+Forbidden: "Got it", "The user confirmed", "I'll invite", "I'll keep it warm",
+"without pushing", chain-of-thought, or a --- separator before the reply.
+
+3-5 lines MAX.
+If user_description is non-empty: acknowledge with warmth and meaning;
 connect to the theme with dignity. Never say "I knew that."
-If user_description is empty: invite briefly once — e.g. if they want to share
-what happened (one ask only, never push).
+If user_description is empty: ONE short warm invite to share what shifted
+(one ask only, never push) — nothing else before or after that invite block.
 If optional_second_window_label_month is non-empty: you may gently connect that
 second MONTH-LEVEL period (e.g. "…and then again around late 2021…") — as a
 question or soft note, not an assertion of what happened.

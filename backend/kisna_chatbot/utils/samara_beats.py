@@ -224,11 +224,36 @@ def next_checkin_phrase(profile: dict, *, lang: str) -> str:
     return pool[nxt]
 
 
+_TRAILING_CONFIRM_RE = re.compile(
+    r"(?:\n|^)\s*(?:"
+    r"does that (?:feel|sound|land|sit)(?:\s+\w+){0,4}\s*\?|"
+    r"am i (?:reading|on)(?:\s+\w+){0,6}\s*\?|"
+    r"does this feel(?:\s+\w+){0,4}\s*\?|"
+    r"pehchaan aa rahi(?:\s+\w+){0,4}\s*\?|"
+    r"ye theek lag(?:\s+\w+){0,4}\s*\?|"
+    r"main sahi(?:\s+\w+){0,6}\s*\?"
+    r")\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def strip_trailing_confirm_question(text: str | None) -> str:
+    """Remove LLM-invented trailing check-ins; system appends one phrase."""
+    raw = (text or "").rstrip()
+    if not raw:
+        return ""
+    prev = None
+    while prev != raw:
+        prev = raw
+        raw = _TRAILING_CONFIRM_RE.sub("", raw).rstrip()
+    return raw
+
+
 def beat1_confirm_buttons(body: str, *, lang: str, profile: dict | None = None) -> dict:
     checkin = ""
     if profile is not None:
         checkin = next_checkin_phrase(profile, lang=lang)
-    text = body.rstrip()
+    text = strip_trailing_confirm_question(body)
     if checkin and checkin.lower() not in text.lower():
         text = f"{text}\n{checkin}"
     if lang == "english":
@@ -536,7 +561,7 @@ def beat2a_confirm_buttons(body: str, *, lang: str, profile: dict | None = None)
     checkin = ""
     if profile is not None:
         checkin = next_checkin_phrase(profile, lang=lang)
-    text = body.rstrip()
+    text = strip_trailing_confirm_question(body)
     if checkin and checkin.lower() not in text.lower():
         text = f"{text}\n{checkin}"
     if lang == "english":
@@ -627,6 +652,99 @@ def dated_anchors_available(chart: dict | None) -> bool:
     return bool(meta.get("dated_anchors_available"))
 
 
+# Chart theme keywords → lived texture (still not invented biography).
+_THEME_TEXTURE_EN: dict[str, str] = {
+    "responsibility": "carrying more than your share while keeping things steady",
+    "ambition": "wanting a bigger lane than the one you were given",
+    "letting go": "releasing something that had defined you for a while",
+    "growth": "stretching into a version of yourself that felt slightly too big",
+    "drive": "pushing hard with restless energy and little pause",
+    "identity": "figuring out who you were when the old labels stopped fitting",
+    "emotions": "feeling everything more sharply than you let on",
+    "communication": "thinking two steps ahead in every conversation",
+    "harmony": "trying to keep the peace even when it cost you",
+    "change": "sensing the ground shifting under your feet",
+    "zimmedari": "carrying more than your share while keeping things steady",
+    "tyag": "releasing something that had defined you for a while",
+    "vistar": "stretching into a version of yourself that felt slightly too big",
+    "urja": "pushing hard with restless energy and little pause",
+    "pehchaan": "figuring out who you were when the old labels stopped fitting",
+    "bhavna": "feeling everything more sharply than you let on",
+    "soch-baat": "thinking two steps ahead in every conversation",
+    "sukh": "trying to keep the peace even when it cost you",
+    "badlav": "sensing the ground shifting under your feet",
+}
+_THEME_TEXTURE_HI: dict[str, str] = {
+    "responsibility": "apne hisse se zyada sambhalte hue sab theek rakhna",
+    "zimmedari": "apne hisse se zyada sambhalte hue sab theek rakhna",
+    "ambition": "diye hue lane se bada lane chahna",
+    "letting go": "kisi cheez ko chhodna jo der se aapko define karti thi",
+    "tyag": "kisi cheez ko chhodna jo der se aapko define karti thi",
+    "growth": "khud ke thode bade version mein stretch karna",
+    "vistar": "khud ke thode bade version mein stretch karna",
+    "drive": "bina rukey zor lagaate rehna",
+    "urja": "bina rukey zor lagaate rehna",
+    "identity": "purane labels jab fit nahi hue, tab pehchaan dhundhna",
+    "pehchaan": "purane labels jab fit nahi hue, tab pehchaan dhundhna",
+    "emotions": "andar se zyada feel karna, bahar se kam dikhana",
+    "bhavna": "andar se zyada feel karna, bahar se kam dikhana",
+    "communication": "har baat mein do kadam aage sochna",
+    "soch-baat": "har baat mein do kadam aage sochna",
+    "harmony": "aman banaye rakhna chahe khud ko mehnga pade",
+    "sukh": "aman banaye rakhna chahe khud ko mehnga pade",
+    "change": "zameen ke hilne ka ehsaas",
+    "badlav": "zameen ke hilne ka ehsaas",
+}
+
+
+def theme_texture_phrase(theme: str | None, *, lang: str) -> str:
+    """Map engine theme keywords to short lived-texture phrases."""
+    key = (theme or "").strip().lower()
+    if not key:
+        return ""
+    table = _THEME_TEXTURE_EN if lang == "english" else _THEME_TEXTURE_HI
+    if key in table:
+        return table[key]
+    # fuzzy: match english key inside hindi theme or vice versa
+    for k, v in table.items():
+        if k in key or key in k:
+            return v
+    return ""
+
+
+def is_beat2c_skip_token(text: str | None) -> bool:
+    """True when user skips sharing detail after bare yes."""
+    raw = " ".join(str(text or "").replace("\n", " ").split()).strip().lower()
+    if not raw:
+        return True
+    if len(raw) <= 2 and raw not in ("ha", "ji"):
+        return True
+    skip = {
+        "ok",
+        "okay",
+        "k",
+        "kk",
+        "next",
+        "aage",
+        "aage badho",
+        "skip",
+        "pass",
+        "continue",
+        "move on",
+        "nahi",
+        "no",
+        "nope",
+        "baad mein",
+        "later",
+        "theek hai",
+        "thik hai",
+        "fine",
+        "nothing",
+        "kuch nahi",
+    }
+    return raw in skip
+
+
 def beat2a_quality_points(chart: dict | None) -> list[dict]:
     """Turning points usable for Beat 2a (age span ≤7 + theme). Empty → skip 2a."""
     out: list[dict] = []
@@ -647,12 +765,18 @@ def beat2a_quality_points(chart: dict | None) -> list[dict]:
             continue
         if not (p.get("theme_en") or p.get("theme_hi")):
             continue
+        theme_en = str(p.get("theme_en") or "")
+        theme_hi = str(p.get("theme_hi") or "")
         out.append(
             {
                 "age_start": a0i,
                 "age_end": a1i,
-                "theme_en": p.get("theme_en"),
-                "theme_hi": p.get("theme_hi"),
+                "theme_en": theme_en,
+                "theme_hi": theme_hi,
+                "texture_phrase_en": theme_texture_phrase(theme_en, lang="english"),
+                "texture_phrase_hi": theme_texture_phrase(
+                    theme_hi or theme_en, lang="hindi"
+                ),
                 "window_label_en": p.get("window_label_en"),
                 "window_label_hi": p.get("window_label_hi"),
             }
@@ -808,13 +932,15 @@ def parse_pwyw_confirm(messages: dict) -> str | None:
 
 
 def want_more_buttons(*, lang: str, body: str) -> dict:
-    """After free surface cliff — invite without burning another LLM call."""
+    """After free deep answer — invite without burning another LLM call."""
     if lang == "english":
-        yes_t, no_t = "Yes, tell me", "I'm good for now"
+        yes_t, no_t = "Want more", "Enough for now"
+        default_body = "Want to go deeper on this, or pause here?"
     else:
-        yes_t, no_t = "Haan, batao", "Abhi theek hai"
+        yes_t, no_t = "Aur jaanna hai", "Abhi bas"
+        default_body = "Ispe aur depth chahiye, ya yahin rukna hai?"
     return _quickreply(
-        body,
+        (body or default_body).strip() or default_body,
         "samara_want_more",
         [
             {"type": "text", "title": yes_t[:20], "postbackText": BTN_WANT_MORE},
@@ -825,7 +951,7 @@ def want_more_buttons(*, lang: str, body: str) -> dict:
 
 
 def parse_want_more_choice(messages: dict) -> str | None:
-    """Return 'more' | 'enough' | None from cliff QR or free-text."""
+    """Return 'more' | 'enough' | 'ack' | None from cliff QR or free-text."""
     pid, title = _extract_postback(messages)
     if pid == BTN_WANT_MORE:
         return "more"
@@ -845,22 +971,55 @@ def parse_want_more_choice(messages: dict) -> str | None:
         "tell me more",
         "yes tell me",
         "want to know more",
+        "want more",
         "woh sunna",
         "filter batao",
         "aage batao",
+        "go deeper",
+        "deeper",
     )
     enough_phrases = (
         "abhi theek",
+        "abhi bas",
         "i'm good",
         "im good",
         "theek hai abhi",
         "baad mein sochung",
         "enough for now",
+        "enough",
+        "pause",
+    )
+    ack_phrases = (
+        "ok",
+        "okay",
+        "k",
+        "kk",
+        "thanks",
+        "thank you",
+        "thx",
+        "ty",
+        "cool",
+        "nice",
+        "great",
+        "got it",
+        "samajh gaya",
+        "samajh gayi",
+        "theek hai",
+        "thik hai",
+        "accha",
+        "acha",
+        "hmm",
+        "haan",
+        "ha",
+        "👍",
+        "🙏",
     )
     if any(p in body for p in more_phrases):
         return "more"
     if any(p in body for p in enough_phrases):
         return "enough"
+    if body in ack_phrases or body.rstrip(".!") in ack_phrases:
+        return "ack"
     return None
 
 

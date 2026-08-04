@@ -54,6 +54,7 @@ from kisna_chatbot.utils.nasa_copy_guard import (
     APPROVED_NASA_LINEAGE,
     sanitize_nasa_endorsement,
 )
+from kisna_chatbot.utils.llm_output_guard import strip_llm_meta
 from kisna_chatbot.utils.samara_beats import (
     ACK_RE_OFFER_TEXT_EN,
     ACK_RE_OFFER_TEXT_HI,
@@ -105,6 +106,7 @@ from kisna_chatbot.utils.samara_beats import (
     paywall_buttons,
     place_confirm_ui,
     is_clear_place_winner,
+    is_beat2c_skip_token,
     pwyw_confirm_buttons,
     looks_like_broke_objection,
     relevant_dasha_slice,
@@ -202,6 +204,15 @@ ENOUGH_ACK_HI = (
 ENOUGH_ACK_EN = (
     "Of course 🙏 When you're ready, type pay — "
     "I'll keep this thread."
+)
+
+SOFT_ACK_NUDGE_EN = (
+    "Glad that landed. If you want to go deeper on this, tap Want more — "
+    "or Enough for now if you'd rather pause."
+)
+SOFT_ACK_NUDGE_HI = (
+    "Achha laga ye sunke. Aur depth chahiye to Want more dabao — "
+    "warna Abhi bas se yahin ruk sakte ho."
 )
 
 BROKE_TEXT_HI = (
@@ -645,6 +656,59 @@ class SamaraReadingAgent(Processor):
                 ]
                 return data
 
+        # Post-free continue hook (Want more / Enough / soft ack) — even when
+        # bot_asked_question is set from the cliff QR.
+        if _is_post_gate_locked(profile) and not profile.get("in_trust_recovery"):
+            want_early = parse_want_more_choice(messages)
+            if want_early == "more":
+                clear_bot_asked_question(profile)
+                if profile.get("gate_suppressed_session") or profile.get(
+                    "paywall_pitch_suppressed"
+                ):
+                    lang = _lang(profile)
+                    data["bot_response"] = [
+                        {
+                            "type": "text",
+                            "text": (
+                                "I'm here when you're ready — no rush."
+                                if lang == "english"
+                                else "Jab ready ho, main yahin hoon — koi rush nahi."
+                            ),
+                        }
+                    ]
+                    return data
+                action = decide_gate_action(
+                    profile, amount_inr=_payment_amount_inr()
+                )
+                if action.kind == "door":
+                    return _emit_door_gate(
+                        data,
+                        profile,
+                        phone_number,
+                        pending="want_more",
+                        body=action.body,
+                    )
+                if needs_trust_recovery(profile):
+                    return self._enter_trust_recovery(data, profile, phone_number)
+                return data
+            if want_early == "enough":
+                clear_bot_asked_question(profile)
+                lang = _lang(profile)
+                data["bot_response"] = [
+                    {
+                        "type": "text",
+                        "text": ENOUGH_ACK_EN if lang == "english" else ENOUGH_ACK_HI,
+                    }
+                ]
+                return data
+            if want_early == "ack":
+                lang = _lang(profile)
+                nudge = SOFT_ACK_NUDGE_EN if lang == "english" else SOFT_ACK_NUDGE_HI
+                profile["bot_asked_question"] = True
+                profile["bot_question_context"] = nudge[-400:]
+                data["bot_response"] = [want_more_buttons(lang=lang, body=nudge)]
+                return data
+
         # Task 1: solicited reply — always free, never gate/debit.
         if profile.get("bot_asked_question") and (
             inbound_text
@@ -716,6 +780,7 @@ class SamaraReadingAgent(Processor):
             else:
                 want = parse_want_more_choice(messages)
                 if want == "more":
+                    clear_bot_asked_question(profile)
                     action = decide_gate_action(
                         profile, amount_inr=_payment_amount_inr()
                     )
@@ -727,6 +792,7 @@ class SamaraReadingAgent(Processor):
                         return self._enter_trust_recovery(data, profile, phone_number)
                     return data
                 if want == "enough":
+                    clear_bot_asked_question(profile)
                     lang = _lang(profile)
                     data["bot_response"] = [
                         {
@@ -735,7 +801,20 @@ class SamaraReadingAgent(Processor):
                         }
                     ]
                     return data
+                if want == "ack":
+                    # Soft ack — re-offer continue hook; do NOT open the door.
+                    lang = _lang(profile)
+                    nudge = (
+                        SOFT_ACK_NUDGE_EN if lang == "english" else SOFT_ACK_NUDGE_HI
+                    )
+                    profile["bot_asked_question"] = True
+                    profile["bot_question_context"] = nudge[-400:]
+                    data["bot_response"] = [
+                        want_more_buttons(lang=lang, body=nudge)
+                    ]
+                    return data
                 if inbound_text and looks_like_broke_objection(inbound_text):
+                    clear_bot_asked_question(profile)
                     action = decide_gate_action(
                         profile, amount_inr=_payment_amount_inr()
                     )
@@ -746,6 +825,7 @@ class SamaraReadingAgent(Processor):
                     return data
                 ret = parse_returning_choice(messages)
                 if ret == "continue" or ret == "new":
+                    clear_bot_asked_question(profile)
                     action = decide_gate_action(
                         profile, amount_inr=_payment_amount_inr()
                     )
@@ -773,6 +853,8 @@ class SamaraReadingAgent(Processor):
                 if messages.get("type") == "text":
                     text_body = ((messages.get("text") or {}).get("body") or "").strip()
                 if text_body and not looks_like_greeting(text_body):
+                    # Depth / free-text ask after free demo → door
+                    clear_bot_asked_question(profile)
                     if needs_trust_recovery(profile):
                         return self._enter_trust_recovery(data, profile, phone_number)
                     action = decide_gate_action(
@@ -1060,26 +1142,49 @@ class SamaraReadingAgent(Processor):
             return data
 
         if beat == BEAT_2C_AWAITING_DETAIL:
-            # Any reply (detail or continue) → topic picker
-            if not claim_beat_transition(
-                profile,
-                expected_beats=(BEAT_2C_AWAITING_DETAIL,),
-                next_beat=BEAT_AWAITING_TOPIC,
-                inbound_id=inbound_id,
-            ):
-                data["bot_response"] = [{"type": "skip"}]
-                return data
-            # If they typed more detail, store on last confirmed event
+            # Optional share after bare yes — reflect on real text; skip tokens → topics
+            body = ""
             if messages.get("type") == "text":
                 body = ((messages.get("text") or {}).get("body") or "").strip()
-                events = list(profile.get("confirmed_events") or [])
-                if body and events and not (events[-1].get("user_description") or "").strip():
-                    events[-1]["user_description"] = body
-                    profile["confirmed_events"] = events
-                    emit_funnel_event(
-                        "event_description_captured", phone_number=phone_number
-                    )
-            return self._send_topic_picker(data, profile)
+            if not body:
+                # Button / empty → topic picker
+                if not claim_beat_transition(
+                    profile,
+                    expected_beats=(BEAT_2C_AWAITING_DETAIL,),
+                    next_beat=BEAT_AWAITING_TOPIC,
+                    inbound_id=inbound_id,
+                ):
+                    data["bot_response"] = [{"type": "skip"}]
+                    return data
+                return self._send_topic_picker(data, profile)
+
+            if is_beat2c_skip_token(body):
+                if not claim_beat_transition(
+                    profile,
+                    expected_beats=(BEAT_2C_AWAITING_DETAIL,),
+                    next_beat=BEAT_AWAITING_TOPIC,
+                    inbound_id=inbound_id,
+                ):
+                    data["bot_response"] = [{"type": "skip"}]
+                    return data
+                return self._send_topic_picker(data, profile)
+
+            # Real share — store + warm reflect + topic picker
+            events = list(profile.get("confirmed_events") or [])
+            if events and not (events[-1].get("user_description") or "").strip():
+                events[-1]["user_description"] = body
+                profile["confirmed_events"] = events
+                emit_funnel_event(
+                    "event_description_captured", phone_number=phone_number
+                )
+            return await self._send_beat2c(
+                data,
+                profile,
+                phone_number,
+                inbound_id,
+                description=body,
+                bare_haan=False,
+            )
 
         if beat == BEAT_2_AWAITING_ADVANCE:
             if parse_beat2_advance(messages):
@@ -1279,6 +1384,7 @@ class SamaraReadingAgent(Processor):
                     "agent": agent_display_name,
                 },
             )
+        clean = strip_llm_meta(clean)
         if profile is not None and chosen_arch is not None:
             record_outbound_variety(profile, clean, chosen_arch)
             from kisna_chatbot.utils.samara_focus import update_focus_after_bot
@@ -1690,14 +1796,14 @@ class SamaraReadingAgent(Processor):
             data["bot_response"] = [{"type": "text", "text": ERROR_TEXT}]
             return data
 
-        profile["beat2_pending_window"] = None
         chunks = text_responses(text)
         if bare_haan:
-            # Soft invite already in LLM text; wait for optional detail
+            # Soft invite already in LLM text; keep pending window for follow-up reflect
             mark_beat_send(profile, BEAT_2C_AWAITING_DETAIL, inbound_id)
             data["bot_response"] = chunks
             return data
 
+        profile["beat2_pending_window"] = None
         # Free-text already captured — advance to topic picker
         mark_beat_send(profile, BEAT_AWAITING_TOPIC, inbound_id)
         offer = self._maybe_test_me_offer(profile)
@@ -1782,9 +1888,18 @@ class SamaraReadingAgent(Processor):
         profile["open_loop_summary"] = text[-400:] if text else ""
         profile["conversation_beat"] = BEAT_POST_FREE_DEEP
         emit_funnel_event("free_deep_answer_sent", phone_number=phone_number)
-        # Complete demo — no cliff QR; do not set bot_asked_question
-        clear_bot_asked_question(profile)
-        data["bot_response"] = text_responses(text)
+        lang = _lang(profile)
+        hook = (
+            "Want to go deeper on this, or pause here?"
+            if lang == "english"
+            else "Ispe aur depth chahiye, ya yahin rukna hai?"
+        )
+        # Keep gate from firing on the next soft reply
+        profile["bot_asked_question"] = True
+        profile["bot_question_context"] = hook[-400:]
+        data["bot_response"] = text_responses(text) + [
+            want_more_buttons(lang=lang, body=hook)
+        ]
         return data
 
     async def _send_muhurat(

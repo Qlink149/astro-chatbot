@@ -106,37 +106,62 @@ def chart_door_windows(profile: dict, *, lang: str) -> str:
 
 
 def door_gate_body(profile: dict, *, amount_inr: float) -> str:
-    """Door framing — PWYW invite; never meter/consumption language."""
+    """Door framing — topic-aware open loop + PWYW; never meter language."""
     from kisna_chatbot.utils.pwyw_amount import (
         credits_for_amount,
         format_inr,
         rupees_per_credit,
     )
+    from kisna_chatbot.utils.samara_beats import TOPIC_LABELS, TOPIC_LABELS_EN
 
     lang = "english" if (profile.get("user_language") or "") == "english" else "hindi"
     windows = chart_door_windows(profile, lang=lang)
     amt = format_inr(amount_inr)
     rate = format_inr(rupees_per_credit())
     floor_credits = credits_for_amount(amount_inr)
+    topic_key = str(profile.get("chosen_topic") or "").strip().lower()
     if lang == "english":
-        return (
-            "That answer stands on its own.\n\n"
-            f"In your chart, clear windows show around {windows}. "
-            "Which month matters most, what to lean into, and what to avoid — "
-            "I can lay out that full picture when you're ready.\n\n"
+        topic_label = TOPIC_LABELS_EN.get(topic_key) or TOPIC_LABELS.get(topic_key) or "this"
+    else:
+        topic_label = TOPIC_LABELS.get(topic_key) or topic_key or "is topic"
+
+    # Rotate cliff openers (deterministic from topic + windows — no random hash).
+    idx = sum(ord(c) for c in f"{topic_key}|{windows}") % 4
+
+    if lang == "english":
+        cliffs = (
+            f"On {topic_label}, your chart still has clearer windows around {windows} — "
+            f"which month to lean into, and what to hold back on.",
+            f"There's more on {topic_label} I haven't opened yet. "
+            f"Your next sharp windows sit around {windows}.",
+            f"If we go deeper on {topic_label}, I'd map the timing around {windows} — "
+            f"what to push, what to protect.",
+            f"The free read on {topic_label} was the door. "
+            f"The fuller timing picture around {windows} is what we unlock next.",
+        )
+        cliff = cliffs[idx]
+        pwyw = (
             f"Pay what you want — minimum ₹{amt} "
             f"(about ₹{rate} per deep answer; at least {floor_credits} answers). "
             f"Type an amount like {amt} when you're ready, or Later — both are fine."
         )
-    return (
-        "Woh jawab poora hai.\n\n"
-        f"Aapke chart mein clear windows dikhte hain — {windows}. "
-        "Kaun sa mahina, kya karna hai, aur kis cheez se bachna hai — "
-        "woh poori tasveer main de sakti hoon jab aap ready ho.\n\n"
+        return f"{cliff}\n\n{pwyw}"
+
+    cliffs_hi = (
+        f"{topic_label} pe chart mein clear windows {windows} ke around hain — "
+        f"kaun sa mahina lean karna hai, kis se bachna hai.",
+        f"{topic_label} pe aur depth baaki hai. Agla sharp window {windows} ke around hai.",
+        f"Agar {topic_label} pe deeper jayein, main {windows} ke timing pe map karungi — "
+        f"kya push karna hai, kya protect.",
+        f"Free read sirf shuruaat thi. {windows} ke around poori timing tasveer next step hai.",
+    )
+    cliff = cliffs_hi[idx]
+    pwyw = (
         f"Jo dena chaho — minimum ₹{amt} "
         f"(lagbhag ₹{rate} per deep jawab; kam se kam {floor_credits} sawaal). "
         f"Amount type karo jaise {amt}, ya Baad mein — dono theek hain."
     )
+    return f"{cliff}\n\n{pwyw}"
 
 
 def decide_gate_action(
