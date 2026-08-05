@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from datetime import date
 from unittest.mock import AsyncMock, patch
 
 os.environ.setdefault("ENV_MODE", "dev")
@@ -24,23 +25,32 @@ from kisna_chatbot.utils.samara_gate import count_gate_messages, door_gate_body
 
 MIN_CHART = {
     "meta": {"birth_year": 1995, "current_age": 30, "chart_type": "birth"},
+    "dasha_timeline": [{"planet_en": "Venus", "phase": "current"}],
     "turning_points": [
         {
-            "window_label_en": "mid-2026",
-            "window_label_hi": "2026 beech",
-            "start": "2026-06-01",
-            "age_start": 30,
-            "age_end": 32,
+            "window_label_en": "mid-2016",
+            "window_label_hi": "2016 beech",
+            "start": "2016-06-01",
+            "age_start": 20,
+            "age_end": 22,
             "theme_en": "career",
         },
         {
-            "window_label_en": "late-2027",
-            "window_label_hi": "2027 ant",
-            "start": "2027-09-01",
-            "age_start": 32,
-            "age_end": 34,
+            "window_label_en": "late-2017",
+            "window_label_hi": "2017 ant",
+            "start": "2017-09-01",
+            "age_start": 22,
+            "age_end": 24,
             "theme_en": "growth",
         },
+    ],
+    # Door copy comes from FUTURE rows only.
+    "upcoming_periods": [
+        {
+            "start": "2026-11-14",
+            "antar_planet_en": "Mars",
+            "theme_en": "drive",
+        }
     ],
 }
 
@@ -57,10 +67,14 @@ def test_door_body_has_no_meter_language():
             "chosen_topic": "career",
         },
         amount_inr=39,
+        today=date(2026, 8, 5),
     ).lower()
     assert "last credit" not in body
     assert "one free deep" not in body
-    assert "mid-2026" in body or "window" in body
+    # Future engine row, never the past turning_points.
+    assert "14 november 2026" in body
+    assert "mid-2016" not in body
+    assert "late-2017" not in body
 
 
 def test_single_gate_on_followup_when_locked():

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import re
+from datetime import date
+
 from kisna_chatbot.utils.llm_output_guard import strip_llm_meta
 from kisna_chatbot.utils.samara_beats import (
     BTN_WANT_MORE,
@@ -125,24 +128,113 @@ def test_theme_texture_phrases():
     assert "effort vs recognition" not in phrase.lower()
 
 
-def test_door_gate_body_not_fixed_canned_paragraph():
+def test_door_never_sells_past_turning_points():
+    """turning_points are PAST by construction — they must never reach the door."""
     profile = {
         "user_language": "english",
         "chosen_topic": "money",
         "chart_json": {
             "turning_points": [
-                {"window_label_en": "mid 2017"},
-                {"window_label_en": "early 2020"},
-            ]
+                {"window_label_en": "mid 2017", "start": "2017-06-01"},
+                {"window_label_en": "early 2020", "start": "2020-02-01"},
+            ],
+            "dasha_timeline": [
+                {"planet_en": "Venus", "phase": "current"},
+            ],
         },
     }
-    body = door_gate_body(profile, amount_inr=39)
-    assert "That answer stands on its own" not in body
-    assert (
-        "Which month matters most, what to lean into, and what to avoid — "
-        "I can lay out that full picture when you're ready."
-    ) not in body
-    assert "mid 2017" in body
-    assert "early 2020" in body
-    assert "₹39" in body or "39" in body
+    body = door_gate_body(profile, amount_inr=39, today=date(2026, 8, 5))
+    assert "mid 2017" not in body
+    assert "early 2020" not in body
+    assert "2017" not in body
+    assert "2020" not in body
+    assert "lean into" not in body.lower()
     assert "money" in body.lower()
+    assert "₹39" in body
+
+
+def test_door_near_branch_names_the_exact_upcoming_date():
+    profile = {
+        "user_language": "english",
+        "chosen_topic": "career",
+        "chart_json": {
+            "turning_points": [{"window_label_en": "mid 2017", "start": "2017-06-01"}],
+            "upcoming_periods": [{"start": "2027-02-11", "antar_planet_en": "Mars"}],
+            "dasha_timeline": [{"planet_en": "Venus", "phase": "current"}],
+        },
+    }
+    body = door_gate_body(profile, amount_inr=39, today=date(2026, 8, 5))
+    assert "11 February 2027" in body
+    assert "mid 2017" not in body
+
+
+def test_door_far_branch_admits_the_distance_and_sells_direction():
+    profile = {
+        "user_language": "english",
+        "chosen_topic": "money",
+        "chart_json": {
+            "upcoming_periods": [{"start": "2028-10-10", "antar_planet_en": "Sun"}],
+            "dasha_timeline": [{"planet_en": "Venus", "phase": "current"}],
+        },
+    }
+    body = door_gate_body(profile, amount_inr=39, today=date(2026, 8, 5))
+    low = body.lower()
+    assert "2028" in body
+    # The honest branch must say the date is useless, not sell it as a window.
+    assert "too far" in low or "no use" in low
+    assert "Venus" in body
+    # Exact day must NOT be dangled as an actionable window in the far branch.
+    assert "10 October 2028" not in body
+
+
+def test_door_none_branch_invents_nothing():
+    profile = {
+        "user_language": "english",
+        "chosen_topic": "love",
+        "chart_json": {"dasha_timeline": [{"planet_en": "Ketu", "phase": "current"}]},
+    }
+    body = door_gate_body(profile, amount_inr=39, today=date(2026, 8, 5))
+    assert not re.search(r"\b(19|20)\d{2}\b", body)
+    assert "Ketu" in body
+
+
+def test_door_names_user_items_and_does_not_resell_the_free_verdict():
+    """Beat 4 already answered 'which one' — the door must not charge for it,
+    and must not go generic at the exact moment it asks for money."""
+    profile = {
+        "user_language": "english",
+        "chosen_topic": "money",
+        "user_items": ["reels page", "freelance design", "print idea"],
+        "chart_json": {
+            "upcoming_periods": [{"start": "2029-01-02"}],
+            "dasha_timeline": [{"planet_en": "Venus", "phase": "current"}],
+        },
+    }
+    body = door_gate_body(profile, amount_inr=39, today=date(2026, 8, 5))
+    for item in profile["user_items"]:
+        assert item in body
+    low = body.lower()
+    # The free answer's question, not the paid one.
+    assert "which one to drop" not in low
+    assert "the things you're carrying" not in low
+    # Sells the unopened cost side instead.
+    assert "cost" in low or "price" in low
+    assert "Venus" in body
+
+
+def test_door_drops_recharge_pack_maths():
+    profile = {
+        "user_language": "english",
+        "chosen_topic": "money",
+        "chart_json": {
+            "upcoming_periods": [{"start": "2027-01-05"}],
+            "dasha_timeline": [{"planet_en": "Venus", "phase": "current"}],
+        },
+    }
+    for lang in ("english", "hindi"):
+        profile["user_language"] = lang
+        body = door_gate_body(profile, amount_inr=39, today=date(2026, 8, 5)).lower()
+        assert "per deep answer" not in body
+        assert "per deep jawab" not in body
+        assert "at least" not in body
+        assert "kam se kam" not in body

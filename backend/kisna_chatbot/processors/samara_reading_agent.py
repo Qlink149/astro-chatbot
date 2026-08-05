@@ -40,6 +40,7 @@ from kisna_chatbot.utils.samara_gate import (
     door_gate_body,
     mark_bot_asked_question,
     needs_trust_recovery,
+    next_upcoming_window,
 )
 from kisna_chatbot.utils.geocode_in import timezone_offset_for
 from kisna_chatbot.utils.place_resolve import resolve_place_candidates
@@ -65,6 +66,8 @@ from kisna_chatbot.utils.samara_beats import (
     BEAT_2B_ALT_AWAITING,
     BEAT_2B_AWAITING_CONFIRM,
     BEAT_2C_AWAITING_DETAIL,
+    BEAT_2C_SECOND_WINDOW,
+    BEAT_AWAITING_ITEMS,
     BEAT_AWAITING_LANGUAGE,
     BEAT_AWAITING_NAME,
     BEAT_AWAITING_PLACE_CONFIRM,
@@ -73,11 +76,17 @@ from kisna_chatbot.utils.samara_beats import (
     BEAT_AWAITING_TOPIC,
     BEAT_POST_FREE_DEEP,
     BEAT_RETURNING_MENU,
+    BEAT_TEST_ME_YEAR,
     BEAT_TRUST_RECOVERY,
+    BTN_ITEMS_SKIP,
+    BTN_TEST_ME_SKIP,
     MAX_DATED_WINDOWS_PER_SESSION,
+    MAX_TEST_ME_CHALLENGES,
     TOPIC_LABELS,
     beat1_confirm_buttons,
     beat2_next_button,
+    beat2a_choice_buttons,
+    beat2a_choice_options,
     beat2a_confirm_buttons,
     beat2a_quality_points,
     beat2b_confirm_buttons,
@@ -87,32 +96,38 @@ from kisna_chatbot.utils.samara_beats import (
     detect_restart_intent,
     display_user_name,
     inbound_message_id,
+    items_ask_buttons,
     looks_like_greeting,
     mark_beat_send,
     needs_conversational_name,
     next_turning_point,
     parse_beat1_confirm,
     parse_beat2_advance,
+    parse_beat2a_choice,
     parse_beat2a_confirm,
     parse_beat2b_confirm,
     parse_paywall_choice,
     parse_pay_intent,
     parse_place_confirm,
+    parse_pwyw_amount_button,
     parse_pwyw_confirm,
     parse_returning_choice,
     parse_topic_choice,
+    parse_user_items,
     parse_want_more_choice,
     parse_yes_no_freetext,
     paywall_buttons,
     place_confirm_ui,
     is_clear_place_winner,
     is_beat2c_skip_token,
+    is_skip_reply,
     pwyw_confirm_buttons,
     looks_like_broke_objection,
     relevant_dasha_slice,
     returning_menu_buttons,
     soft_past_range_from_chart,
     strip_exact_dates_from_beat1,
+    test_me_ask_buttons,
     text_responses,
     topic_label_for,
     topic_picker_buttons,
@@ -179,6 +194,35 @@ NUDGE_TEXT = NUDGE_TEXT_EN
 
 NAME_ASK_TEXT_HI = "Aapko kya bulaun? 🌙"
 NAME_ASK_TEXT_EN = "What should I call you? 🌙"
+
+# Post-2c — user-driven falsifiable proof. Samara names the chart period,
+# NEVER the life event. Templated from engine antardasha rows only.
+# Deliberately AFTER the dated ladder: Beat 2b must get its unprompted
+# month-level swing before the user starts choosing the years.
+TEST_ME_ASK_EN = (
+    "One more thing before we pick a direction — test me.\n"
+    "Name any year since you were 15. I'll tell you what your chart was "
+    "running then. I won't tell you what happened in your life; that's yours."
+)
+TEST_ME_ASK_HI = (
+    "Direction choose karne se pehle ek cheez — mujhe test kariye.\n"
+    "15 saal ki umar ke baad ka koi bhi saal boliye. Main bataungi us waqt "
+    "aapke chart mein kya chal raha tha. Kya hua — woh aapki baat hai, meri nahi."
+)
+TEST_ME_AGAIN_EN = "Another year, or shall we move on?"
+TEST_ME_AGAIN_HI = "Ek aur saal, ya aage badhein?"
+TEST_ME_MOVE_ON_EN = "Alright — let's keep going."
+TEST_ME_MOVE_ON_HI = "Theek hai — aage chalte hain."
+
+# "Name your two or three" — answered inside the FREE demo (RULE 6).
+ITEMS_ASK_EN = (
+    "Before I read it — what are the two or three things you're half-doing "
+    "right now? Just type them in one line."
+)
+ITEMS_ASK_HI = (
+    "Padhne se pehle — abhi aap do-teen kaunsi cheezein aadhi-adhoori kar "
+    "rahe ho? Bas ek line mein type kar dijiye."
+)
 
 # First-gate / door — never meter consumption language as primary.
 PAYWALL_TEXT_HI = (
@@ -288,10 +332,20 @@ LANG_BTN_ENGLISH = "samara_lang_en"
 LANG_BTN_HINDI = "samara_lang_hi"
 
 
-def _language_quickreply_response() -> dict:
+def _language_quickreply_response(place_name: str = "") -> dict:
+    """Language picker. Shows the auto-confirmed place so a wrong city is visible."""
+    text = LANG_ASK_TEXT
+    place = " ".join(str(place_name or "").split()).strip(" ,")
+    if place:
+        text = (
+            f"🌸 {place} — kundli ready.\n"
+            "(Agar place galat hai, 'start over' likh dijiye.)\n\n"
+            "Reading kis bhasha mein chahiye? Please pick one below.\n"
+            "In which language would you like your reading?"
+        )
     return {
         "type": "quickreply",
-        "text": LANG_ASK_TEXT,
+        "text": text,
         "caption": LANG_ASK_CAPTION,
         "msgid": "samara_language_choice",
         "options": [
@@ -656,6 +710,25 @@ class SamaraReadingAgent(Processor):
                 ]
                 return data
 
+        # Tapped ₹ amount on the door → straight into PWYW, prefilled.
+        # Must precede the solicited-reply branch: a button tap is a decision,
+        # never free text answering an earlier question.
+        tapped_amount = parse_pwyw_amount_button(messages)
+        if tapped_amount is not None:
+            emit_funnel_event(
+                "pwyw_amount_tapped",
+                phone_number=phone_number,
+                extra={"amount_inr": tapped_amount},
+            )
+            clear_bot_asked_question(profile)
+            profile["conversation_beat"] = BEAT_AWAITING_PWYW_AMOUNT
+            return await self._handle_pwyw_beat(
+                data,
+                profile,
+                phone_number,
+                {"type": "text", "text": {"body": str(tapped_amount)}},
+            )
+
         # Post-free continue hook (Want more / Enough / soft ack) — even when
         # bot_asked_question is set from the cliff QR.
         if _is_post_gate_locked(profile) and not profile.get("in_trust_recovery"):
@@ -981,6 +1054,9 @@ class SamaraReadingAgent(Processor):
         if beat == BEAT_1_AWAITING_CONFIRM:
             conf = parse_beat1_confirm(messages)
             if conf:
+                # Test-me deliberately does NOT fire here: Beat 2b must land an
+                # unprompted month-level date before the user starts naming
+                # years, or every date Samara says is one they supplied first.
                 next_state = (
                     BEAT_2A_AWAITING_CONFIRM
                     if dated_anchors_available(profile.get("chart_json"))
@@ -1020,8 +1096,109 @@ class SamaraReadingAgent(Processor):
             ]
             return data
 
+        # ── Post-2c: user-driven year challenge, then topics ────────────────
+        if beat == BEAT_TEST_ME_YEAR:
+            if is_skip_reply(messages, postback=BTN_TEST_ME_SKIP):
+                return self._leave_test_me(
+                    data, profile, phone_number, inbound_id, acknowledge=True
+                )
+            challenge_text = ""
+            if messages.get("type") == "text":
+                challenge_text = (
+                    (messages.get("text") or {}).get("body") or ""
+                ).strip()
+            year = _extract_year_challenge(challenge_text)
+            if year is None:
+                # Not a year and not a skip — don't trap them here.
+                return self._leave_test_me(
+                    data, profile, phone_number, inbound_id, acknowledge=True
+                )
+            handled = self._handle_test_me_year(
+                data, profile, phone_number, challenge_text
+            )
+            if handled is None:
+                return self._leave_test_me(
+                    data, profile, phone_number, inbound_id, acknowledge=True
+                )
+            used = int(profile.get("test_me_count") or 0)
+            lang = _lang(profile)
+            if used >= MAX_TEST_ME_CHALLENGES:
+                # Out of challenges — answer, then hand over to the topics.
+                answered = list(data.get("bot_response") or [])
+                nxt = self._advance_after_test_me(
+                    data, profile, phone_number, inbound_id
+                )
+                nxt["bot_response"] = answered + list(nxt.get("bot_response") or [])
+                return nxt
+            again = TEST_ME_AGAIN_EN if lang == "english" else TEST_ME_AGAIN_HI
+            answered = list(data.get("bot_response") or [])
+            body = answered[-1].get("text", "") if answered else ""
+            data["bot_response"] = answered[:-1] + [
+                test_me_ask_buttons(f"{body}\n\n{again}".strip(), lang=lang)
+            ]
+            mark_beat_send(profile, BEAT_TEST_ME_YEAR, inbound_id)
+            return data
+
         # ── Dated Beat 2 ladder ─────────────────────────────────────────────
         if beat == BEAT_2A_AWAITING_CONFIRM:
+            choice_labels = list(profile.get("beat2a_choice_labels") or [])
+            if choice_labels:
+                pick = parse_beat2a_choice(messages, choice_labels)
+                if pick in ("a", "b"):
+                    if not claim_beat_transition(
+                        profile,
+                        expected_beats=(BEAT_2A_AWAITING_CONFIRM,),
+                        next_beat=BEAT_2B_AWAITING_CONFIRM,
+                        inbound_id=inbound_id,
+                    ):
+                        data["bot_response"] = [{"type": "skip"}]
+                        return data
+                    chosen = choice_labels[0 if pick == "a" else 1]
+                    profile["beat2a_chosen_texture"] = chosen
+                    emit_funnel_event(
+                        "beat_2a_choice_made",
+                        phone_number=phone_number,
+                        extra={"choice": pick},
+                    )
+                    # A forced choice is NOT agreement — no politeness credit.
+                    bump_trust(profile, 0)
+                    return await self._send_beat2b(
+                        data, profile, phone_number, inbound_id, alt=False
+                    )
+                if pick == "neither":
+                    if not claim_beat_transition(
+                        profile,
+                        expected_beats=(BEAT_2A_AWAITING_CONFIRM,),
+                        next_beat=BEAT_AWAITING_TOPIC,
+                        inbound_id=inbound_id,
+                    ):
+                        data["bot_response"] = [{"type": "skip"}]
+                        return data
+                    emit_funnel_event("beat_2a_rejected", phone_number=phone_number)
+                    bump_trust(profile, -2)
+                    if needs_trust_recovery(profile):
+                        return self._enter_trust_recovery(data, profile, phone_number)
+                    warm = (
+                        "Theek hai — main zabardasti fit nahi karungi. Aage dekhte hain. 🙏"
+                        if _lang(profile) != "english"
+                        else "Fair enough — I won't force a fit. Let's look ahead. 🙏"
+                    )
+                    data["bot_response"] = [
+                        {"type": "text", "text": warm},
+                        topic_picker_buttons(lang=_lang(profile)),
+                    ]
+                    mark_beat_send(profile, BEAT_AWAITING_TOPIC, inbound_id)
+                    return data
+                data["bot_response"] = [
+                    beat2a_choice_buttons(
+                        ACK_RE_OFFER_TEXT_EN
+                        if _lang(profile) == "english"
+                        else ACK_RE_OFFER_TEXT_HI,
+                        lang=_lang(profile),
+                        labels=choice_labels,
+                    )
+                ]
+                return data
             ans = parse_beat2a_confirm(messages)
             if ans == "yes":
                 if not claim_beat_transition(
@@ -1147,7 +1324,7 @@ class SamaraReadingAgent(Processor):
             if messages.get("type") == "text":
                 body = ((messages.get("text") or {}).get("body") or "").strip()
             if not body:
-                # Button / empty → topic picker
+                # Button / empty → 2c is done
                 if not claim_beat_transition(
                     profile,
                     expected_beats=(BEAT_2C_AWAITING_DETAIL,),
@@ -1156,7 +1333,9 @@ class SamaraReadingAgent(Processor):
                 ):
                     data["bot_response"] = [{"type": "skip"}]
                     return data
-                return self._send_topic_picker(data, profile)
+                return self._after_beat2c(
+                    data, profile, phone_number, inbound_id, []
+                )
 
             if is_beat2c_skip_token(body):
                 if not claim_beat_transition(
@@ -1167,7 +1346,9 @@ class SamaraReadingAgent(Processor):
                 ):
                     data["bot_response"] = [{"type": "skip"}]
                     return data
-                return self._send_topic_picker(data, profile)
+                return self._after_beat2c(
+                    data, profile, phone_number, inbound_id, []
+                )
 
             # Real share — store + warm reflect + topic picker
             events = list(profile.get("confirmed_events") or [])
@@ -1185,6 +1366,90 @@ class SamaraReadingAgent(Processor):
                 description=body,
                 bare_haan=False,
             )
+
+        # Second dated window — Samara asked, so this reply must be received.
+        if beat == BEAT_2C_SECOND_WINDOW:
+            body = ""
+            if messages.get("type") == "text":
+                body = ((messages.get("text") or {}).get("body") or "").strip()
+            result, free_text = parse_beat2b_confirm(messages)
+            window = profile.get("beat2c_second_pending") or {}
+            said_no = result == "no" or (
+                body and is_beat2c_skip_token(body) and result != "text"
+            )
+            if not claim_beat_transition(
+                profile,
+                expected_beats=(BEAT_2C_SECOND_WINDOW,),
+                next_beat=BEAT_AWAITING_TOPIC,
+                inbound_id=inbound_id,
+            ):
+                data["bot_response"] = [{"type": "skip"}]
+                return data
+            profile["beat2c_second_pending"] = None
+            clear_bot_asked_question(profile)
+            if said_no or not (result or body):
+                emit_funnel_event(
+                    "beat_2c_second_rejected", phone_number=phone_number
+                )
+                _record_rejected_window(profile, window)
+                bump_trust(profile, -1)
+                warm = (
+                    "Theek hai — sab windows sab ke liye nahi hoti. 🙏"
+                    if _lang(profile) != "english"
+                    else "That's fine — not every window lands. 🙏"
+                )
+                return self._after_beat2c(
+                    data,
+                    profile,
+                    phone_number,
+                    inbound_id,
+                    [{"type": "text", "text": warm}],
+                )
+            description = free_text.strip() or (body if result != "yes" else "")
+            emit_funnel_event(
+                "beat_2c_second_confirmed", phone_number=phone_number
+            )
+            bump_trust(profile, 2)
+            if description:
+                bump_trust(profile, 1)
+                emit_funnel_event(
+                    "event_description_captured", phone_number=phone_number
+                )
+            _record_confirmed_event(profile, window, description)
+            return await self._send_beat2c(
+                data,
+                profile,
+                phone_number,
+                inbound_id,
+                description=description,
+                bare_haan=False,
+                window_override=window,
+                allow_second_window=False,
+            )
+
+        # "Name your two or three" — free demo input, never gated (RULE 6).
+        if beat == BEAT_AWAITING_ITEMS:
+            topic = profile.get("chosen_topic") or "career"
+            if is_skip_reply(messages, postback=BTN_ITEMS_SKIP):
+                profile["user_items"] = []
+                mark_beat_send(profile, BEAT_POST_FREE_DEEP, inbound_id)
+                return await self._send_beat4(data, profile, phone_number, topic)
+            body = ""
+            if messages.get("type") == "text":
+                body = ((messages.get("text") or {}).get("body") or "").strip()
+            items = parse_user_items(body) if body else []
+            if not items:
+                profile["user_items"] = []
+                mark_beat_send(profile, BEAT_POST_FREE_DEEP, inbound_id)
+                return await self._send_beat4(data, profile, phone_number, topic)
+            profile["user_items"] = items
+            emit_funnel_event(
+                "user_items_captured",
+                phone_number=phone_number,
+                extra={"count": len(items)},
+            )
+            mark_beat_send(profile, BEAT_POST_FREE_DEEP, inbound_id)
+            return await self._send_beat4(data, profile, phone_number, topic)
 
         if beat == BEAT_2_AWAITING_ADVANCE:
             if parse_beat2_advance(messages):
@@ -1236,7 +1501,7 @@ class SamaraReadingAgent(Processor):
                 if not claim_beat_transition(
                     profile,
                     expected_beats=(BEAT_AWAITING_TOPIC,),
-                    next_beat=BEAT_POST_FREE_DEEP,
+                    next_beat=BEAT_AWAITING_ITEMS,
                     inbound_id=inbound_id,
                 ):
                     data["bot_response"] = [
@@ -1254,7 +1519,24 @@ class SamaraReadingAgent(Processor):
                     phone_number=phone_number,
                     extra={"topic": topic},
                 )
-                return await self._send_beat4(data, profile, phone_number, topic)
+                return self._send_items_ask(data, profile, phone_number, inbound_id)
+
+            # Free text here used to be silently replaced by the picker. A year
+            # is a test-me challenge; anything else gets an ack + the picker.
+            topic_text = ""
+            if messages.get("type") == "text":
+                topic_text = ((messages.get("text") or {}).get("body") or "").strip()
+            if topic_text and self._test_me_available(profile):
+                if _extract_year_challenge(topic_text) is not None:
+                    handled = self._handle_test_me_year(
+                        data, profile, phone_number, topic_text
+                    )
+                    if handled is not None:
+                        handled["bot_response"] = list(
+                            handled.get("bot_response") or []
+                        ) + [topic_picker_buttons(lang=_lang(profile))]
+                        mark_beat_send(profile, BEAT_AWAITING_TOPIC, inbound_id)
+                        return handled
             data["bot_response"] = [topic_picker_buttons(lang=_lang(profile))]
             return data
 
@@ -1512,6 +1794,91 @@ class SamaraReadingAgent(Processor):
         data["bot_response"] = chunks
         return data
 
+    # ── Beat 1.5 — test me ───────────────────────────────────────────────────
+
+    def _test_me_available(self, profile: dict) -> bool:
+        """Only when the engine actually has antardasha rows to answer from."""
+        if int(profile.get("test_me_count") or 0) >= MAX_TEST_ME_CHALLENGES:
+            return False
+        if profile.get("test_me_used"):  # legacy once-per-session flag
+            return False
+        chart = profile.get("chart_json") or {}
+        return bool(chart.get("antardasha_timeline"))
+
+    def _send_test_me_ask(
+        self,
+        data: dict,
+        profile: dict,
+        phone_number: str,
+        inbound_id: str,
+        *,
+        prefix: list[dict] | None = None,
+    ) -> dict:
+        """Offered only after the dated ladder has had its unprompted swing."""
+        lang = _lang(profile)
+        body = TEST_ME_ASK_EN if lang == "english" else TEST_ME_ASK_HI
+        profile["test_me_offered"] = True
+        mark_beat_send(profile, BEAT_TEST_ME_YEAR, inbound_id)
+        emit_funnel_event("test_me_offered", phone_number=phone_number)
+        data["bot_response"] = list(prefix or []) + [
+            test_me_ask_buttons(body, lang=lang)
+        ]
+        return data
+
+    def _advance_after_test_me(
+        self, data: dict, profile: dict, phone_number: str, inbound_id: str
+    ) -> dict:
+        """Test-me sits between Beat 2c and the topic picker — exit to topics."""
+        mark_beat_send(profile, BEAT_AWAITING_TOPIC, inbound_id)
+        data["bot_response"] = [topic_picker_buttons(lang=_lang(profile))]
+        return data
+
+    def _leave_test_me(
+        self,
+        data: dict,
+        profile: dict,
+        phone_number: str,
+        inbound_id: str,
+        *,
+        acknowledge: bool,
+    ) -> dict:
+        lang = _lang(profile)
+        nxt = self._advance_after_test_me(data, profile, phone_number, inbound_id)
+        if acknowledge:
+            ack = TEST_ME_MOVE_ON_EN if lang == "english" else TEST_ME_MOVE_ON_HI
+            nxt["bot_response"] = [{"type": "text", "text": ack}] + list(
+                nxt.get("bot_response") or []
+            )
+        return nxt
+
+    def _after_beat2c(
+        self,
+        data: dict,
+        profile: dict,
+        phone_number: str,
+        inbound_id: str,
+        chunks: list[dict],
+    ) -> dict:
+        """Beat 2c is done. Offer the year challenge, else go to topics."""
+        if self._test_me_available(profile):
+            return self._send_test_me_ask(
+                data, profile, phone_number, inbound_id, prefix=chunks
+            )
+        mark_beat_send(profile, BEAT_AWAITING_TOPIC, inbound_id)
+        data["bot_response"] = chunks + [topic_picker_buttons(lang=_lang(profile))]
+        return data
+
+    def _send_items_ask(
+        self, data: dict, profile: dict, phone_number: str, inbound_id: str
+    ) -> dict:
+        """Collect the user's own nouns before the FREE deep answer (RULE 6)."""
+        lang = _lang(profile)
+        body = ITEMS_ASK_EN if lang == "english" else ITEMS_ASK_HI
+        mark_beat_send(profile, BEAT_AWAITING_ITEMS, inbound_id)
+        emit_funnel_event("items_asked", phone_number=phone_number)
+        data["bot_response"] = [items_ask_buttons(body, lang=lang)]
+        return data
+
     async def _send_beat2_entry(
         self,
         data: dict,
@@ -1597,6 +1964,9 @@ class SamaraReadingAgent(Processor):
             return await self._send_beat2(
                 data, profile, phone_number, inbound_id, confirm_signal="soft"
             )
+        # Forced choice beats a third "am I right?" — but only when the engine
+        # gives two DISTINCT textures to choose between.
+        choice_labels = beat2a_choice_options(themes, lang=lang)
         instruction = SAMARA_BEAT2A_THEME_PROMPT.format(
             user_name=display_user_name(profile),
             user_language=lang,
@@ -1604,6 +1974,9 @@ class SamaraReadingAgent(Processor):
             current_age=now_ctx["current_age"],
             themes_json=json.dumps(themes, ensure_ascii=False),
             confirmed_events_json=_confirmed_events_json(profile),
+            choice_mode="forced_choice" if choice_labels else "confirm",
+            choice_label_a=choice_labels[0] if choice_labels else "",
+            choice_label_b=choice_labels[1] if choice_labels else "",
         )
         try:
             text = await self._llm(
@@ -1621,13 +1994,21 @@ class SamaraReadingAgent(Processor):
             return data
 
         chunks = text_responses(text)
-        if chunks:
-            last = chunks[-1]["text"]
+        if choice_labels:
+            profile["beat2a_choice_labels"] = choice_labels
+            tail = chunks[-1]["text"] if chunks else text
             chunks = chunks[:-1] + [
-                beat2a_confirm_buttons(last, lang=lang, profile=profile)
+                beat2a_choice_buttons(tail, lang=lang, labels=choice_labels)
             ]
         else:
-            chunks = [beat2a_confirm_buttons(text, lang=lang, profile=profile)]
+            profile["beat2a_choice_labels"] = []
+            if chunks:
+                last = chunks[-1]["text"]
+                chunks = chunks[:-1] + [
+                    beat2a_confirm_buttons(last, lang=lang, profile=profile)
+                ]
+            else:
+                chunks = [beat2a_confirm_buttons(text, lang=lang, profile=profile)]
 
         # Reset per-chart-session window counters for a fresh dated ladder
         profile["beat2_windows_offered"] = 0
@@ -1688,6 +2069,7 @@ class SamaraReadingAgent(Processor):
             ),
             theme_en=window.get("theme_en") or "",
             theme_hi=window.get("theme_hi") or "",
+            user_choice=str(profile.get("beat2a_chosen_texture") or ""),
         )
         try:
             text = await self._llm(
@@ -1739,9 +2121,11 @@ class SamaraReadingAgent(Processor):
         *,
         description: str,
         bare_haan: bool,
+        window_override: dict | None = None,
+        allow_second_window: bool = True,
     ) -> dict:
         lang = _lang(profile)
-        pending = profile.get("beat2_pending_window") or {}
+        pending = window_override or profile.get("beat2_pending_window") or {}
         if lang != "english":
             window_label = (
                 pending.get("window_label_month_hi")
@@ -1757,22 +2141,48 @@ class SamaraReadingAgent(Processor):
         theme = (
             pending.get("theme_hi") if lang != "english" else pending.get("theme_en")
         ) or ""
-        # Optional second month-level window from remaining turning points
+        # Optional second month-level window from remaining turning points.
+        # Only offered when we can actually RECEIVE the answer (BEAT_2C_SECOND_WINDOW).
         optional_month = ""
+        second_window: dict | None = None
         chart = profile.get("chart_json") or {}
         pending_start = str(pending.get("start") or "")
-        for tp in chart.get("turning_points") or []:
-            if not isinstance(tp, dict):
-                continue
-            if str(tp.get("start") or "") == pending_start:
-                continue
-            optional_month = (
-                tp.get("window_label_month_hi")
-                if lang != "english"
-                else tp.get("window_label_month_en")
-            ) or ""
-            if optional_month:
-                break
+        offer_second = (
+            allow_second_window
+            and not bare_haan
+            and not profile.get("beat2c_second_offered")
+        )
+        if offer_second:
+            rejected = {
+                str(r.get("start_date") or "")
+                for r in (profile.get("rejected_windows") or [])
+                if isinstance(r, dict)
+            }
+            confirmed = {
+                str(e.get("start_date") or "")
+                for e in (profile.get("confirmed_events") or [])
+                if isinstance(e, dict)
+            }
+            # A year already spent on a test-me challenge is not a fresh ask —
+            # re-offering it reads as not listening.
+            seen_years = {str(y) for y in (profile.get("test_me_years") or [])}
+            for tp in chart.get("turning_points") or []:
+                if not isinstance(tp, dict):
+                    continue
+                start = str(tp.get("start") or "")
+                if start == pending_start or start in rejected or start in confirmed:
+                    continue
+                if start[:4] in seen_years:
+                    continue
+                label = (
+                    tp.get("window_label_month_hi")
+                    if lang != "english"
+                    else tp.get("window_label_month_en")
+                ) or ""
+                if label:
+                    optional_month = label
+                    second_window = tp
+                    break
         instruction = SAMARA_BEAT2C_REFLECT_PROMPT.format(
             user_name=display_user_name(profile),
             user_language=lang,
@@ -1804,19 +2214,38 @@ class SamaraReadingAgent(Processor):
             return data
 
         profile["beat2_pending_window"] = None
-        # Free-text already captured — advance to topic picker
-        mark_beat_send(profile, BEAT_AWAITING_TOPIC, inbound_id)
-        offer = self._maybe_test_me_offer(profile)
-        data["bot_response"] = chunks
-        if offer:
-            data["bot_response"] = chunks + [{"type": "text", "text": offer}]
-        data["bot_response"] = data["bot_response"] + [
-            topic_picker_buttons(lang=lang)
-        ]
-        return data
+
+        # A second dated window was named — it is a REAL question, so hold a
+        # state that can receive the answer instead of burying it under the
+        # topic picker. Two correct months beat one polished paragraph.
+        if second_window is not None and optional_month:
+            profile["beat2c_second_offered"] = True
+            profile["beat2c_second_pending"] = second_window
+            profile["bot_asked_question"] = True
+            profile["bot_question_context"] = (
+                f"second dated window around {optional_month}"
+            )[-400:]
+            offered = list(profile.get("beat2_offered_starts") or [])
+            start = str(second_window.get("start") or "")
+            if start and start not in offered:
+                offered.append(start)
+                profile["beat2_offered_starts"] = offered
+            if chunks:
+                tail = chunks[-1]["text"]
+                chunks = chunks[:-1] + [beat2b_confirm_buttons(tail, lang=lang)]
+            mark_beat_send(profile, BEAT_2C_SECOND_WINDOW, inbound_id)
+            emit_funnel_event("beat_2c_second_offered", phone_number=phone_number)
+            data["bot_response"] = chunks
+            return data
+
+        # 2c done — offer the year challenge (if any left), else topics.
+        return self._after_beat2c(data, profile, phone_number, inbound_id, chunks)
 
     def _maybe_test_me_offer(self, profile: dict) -> str | None:
-        """Once per session after a confirmed dated anchor."""
+        """DEPRECATED — test-me is now its own beat (BEAT_TEST_ME_YEAR) offered
+        right after Beat 1, where the reply can actually be received. Kept for
+        back-compat; no longer called from the Beat 2c path.
+        """
         if profile.get("test_me_offered") or profile.get("test_me_used"):
             return None
         if not (profile.get("confirmed_events") or profile.get("beat2_offered_starts")):
@@ -1849,6 +2278,7 @@ class SamaraReadingAgent(Processor):
         lang = _lang(profile)
         history_snippet = format_prompt_history(profile) or "(no prior turns)"
         label = TOPIC_LABELS.get(topic, topic)
+        window = next_upcoming_window(profile, lang=lang)
         instruction = SAMARA_BEAT4_DEEP_PROMPT.format(
             chart_json=json.dumps(slim_chart_for_beat(chart, "beat4"), ensure_ascii=False),
             user_name=display_user_name(profile),
@@ -1859,6 +2289,12 @@ class SamaraReadingAgent(Processor):
             topic_label=label,
             chat_history_snippet=history_snippet,
             confirmed_events_json=_confirmed_events_json(profile),
+            user_items_json=json.dumps(
+                list(profile.get("user_items") or []), ensure_ascii=False
+            ),
+            next_window_distance=(
+                f"{window.kind} ({window.label})" if window.label else window.kind
+            ),
             turning_points_json=json.dumps(
                 (chart or {}).get("turning_points") or [], ensure_ascii=False
             ),
@@ -1967,12 +2403,12 @@ class SamaraReadingAgent(Processor):
         if lang == "english":
             body = (
                 f"Pay what you want — minimum ₹{min_s}. "
-                f"Type an amount (e.g. {min_s} or 99)."
+                f"Tap an amount below, or type any other."
             )
         else:
             body = (
                 f"Jo dena chaho — minimum ₹{min_s}. "
-                f"Amount type karo (jaise {min_s} ya 99)."
+                f"Neeche se tap karo, ya koi aur amount type kar do."
             )
         data["bot_response"] = [
             paywall_buttons(lang=lang, body=body, amount_inr=min_payment_inr())
@@ -2159,6 +2595,15 @@ class SamaraReadingAgent(Processor):
             ]
             return data
 
+        # Name captured in the Flow when available — saves a whole round-trip.
+        # Falls back to the conversational ask when the Flow build predates it.
+        flow_name = str(flow_data.get("preferred_name") or "").strip()
+        if flow_name:
+            cleaned = re.sub(r"[^A-Za-zऀ-ॿ\s.'-]", "", flow_name).strip()
+            cleaned = " ".join(cleaned.split())[:30]
+            if cleaned and cleaned.lower() not in ("dost", "user", "hi", "hello"):
+                profile["preferred_name"] = cleaned
+
         year, month, day = ymd
         unknown_time = _unknown_time_selected(flow_data)
         hm = _parse_birth_time(flow_data)
@@ -2213,6 +2658,16 @@ class SamaraReadingAgent(Processor):
         attempts = int(profile.get("place_attempts") or 0)
         force_list = attempts >= 3 and len(candidates) >= 1
         clear = is_clear_place_winner(candidates)
+
+        # Admin trim: an unambiguous winner on the FIRST attempt doesn't need a
+        # confirmation round-trip. The place name is echoed on the language ask,
+        # and 'start over' still fixes a wrong city.
+        if not force_list and not retype and clear and candidates:
+            profile["pending_place"] = candidates[0]
+            emit_funnel_event("place_auto_confirmed", phone_number=phone_number)
+            return await self._compute_chart_from_pending(
+                data, profile, phone_number
+            )
 
         if force_list:
             data["bot_response"] = [
@@ -2455,12 +2910,21 @@ class SamaraReadingAgent(Processor):
         profile["beat2_windows_offered"] = 0
         profile["beat2_offered_starts"] = []
         profile["beat2_pending_window"] = None
-        # Clear place-confirm scratch
+        # Clear place-confirm scratch + per-chart beat scratch
         for key in (
             "pending_birth",
             "pending_place",
             "place_candidates",
             "place_attempts",
+            "test_me_count",
+            "test_me_used",
+            "test_me_offered",
+            "test_me_years",
+            "user_items",
+            "beat2a_choice_labels",
+            "beat2a_chosen_texture",
+            "beat2c_second_offered",
+            "beat2c_second_pending",
         ):
             profile.pop(key, None)
         emit_funnel_event("birth_flow_completed", phone_number=phone_number)
@@ -2472,7 +2936,7 @@ class SamaraReadingAgent(Processor):
                 "place": place_name,
             },
         )
-        data["bot_response"] = [_language_quickreply_response()]
+        data["bot_response"] = [_language_quickreply_response(place_name)]
         return data
 
     async def _handle_solicited_reply(
@@ -2709,7 +3173,7 @@ class SamaraReadingAgent(Processor):
             # followup / clarification / meta / test_me — free, no gate, no debit
             if intent == "test_me" or (
                 profile.get("test_me_offered")
-                and not profile.get("test_me_used")
+                and self._test_me_available(profile)
                 and _extract_year_challenge(question)
             ):
                 handled = self._handle_test_me_year(
@@ -2848,19 +3312,22 @@ class SamaraReadingAgent(Processor):
         phone_number: str,
         question: str,
     ) -> dict | None:
-        """Once-per-session year challenge — engine period character only."""
+        """Year challenge — engine period character only. Capped per session."""
         year = _extract_year_challenge(question)
         if year is None:
             return None
-        if profile.get("test_me_used"):
+        used = int(profile.get("test_me_count") or 0)
+        if profile.get("test_me_used") or used >= MAX_TEST_ME_CHALLENGES:
             lang = _lang(profile)
             data["bot_response"] = [
                 {
                     "type": "text",
                     "text": (
-                        "One challenge per session is enough — let's keep going with your question."
+                        f"That's {MAX_TEST_ME_CHALLENGES} challenges — enough proof "
+                        f"for one session. Let's keep going with your question."
                         if lang == "english"
-                        else "Ek session mein ek challenge kaafi hai — aage badhte hain."
+                        else f"{MAX_TEST_ME_CHALLENGES} challenge ho gaye — ek session "
+                        f"ke liye kaafi hai. Aage badhte hain."
                     ),
                 }
             ]
@@ -2874,19 +3341,35 @@ class SamaraReadingAgent(Processor):
         )
         lang = _lang(profile)
         if not row:
+            # Honest miss — never bluff a period we don't have.
+            emit_funnel_event(
+                "test_me_missed",
+                phone_number=phone_number,
+                extra={"year": year},
+            )
             data["bot_response"] = [
                 {
                     "type": "text",
                     "text": (
-                        f"I don't have a clear antardasha window for {year} in this chart."
+                        f"I don't have a clear antardasha window for {year} in this "
+                        f"chart, so I won't make one up. Try another year."
                         if lang == "english"
-                        else f"{year} ke liye chart mein clear antardasha window nahi dikha."
+                        else f"{year} ke liye chart mein clear antardasha window nahi "
+                        f"dikha — main bana ke nahi bataungi. Koi aur saal boliye."
                     ),
                 }
             ]
             return data
 
-        profile["test_me_used"] = True
+        profile["test_me_count"] = used + 1
+        if profile["test_me_count"] >= MAX_TEST_ME_CHALLENGES:
+            profile["test_me_used"] = True
+        # Remember which years were spent here so the dated ladder doesn't
+        # re-ask a window the user has already seen.
+        years = list(profile.get("test_me_years") or [])
+        if year not in years:
+            years.append(year)
+        profile["test_me_years"] = years
         month = (
             row.get("window_label_month_hi")
             if lang != "english"
@@ -2902,18 +3385,33 @@ class SamaraReadingAgent(Processor):
 
         theme_en, theme_hi = ANTAR_THEMES.get(antar, ("change", "badlav"))
         theme = theme_hi if lang != "english" else theme_en
+        # Rotate phrasing by challenge number. The same sentence twice in a row
+        # exposes the template and burns the one feature the user can falsify.
+        turn = min(int(profile["test_me_count"]), MAX_TEST_ME_CHALLENGES) - 1
         if lang == "english":
-            body = (
-                f"Around {month}, your chart was in a {maha}–{antar} chapter "
-                f"with a texture of {theme}. I won't claim what happened — "
-                f"does that period ring a bell?"
+            variants = (
+                f"Around {month} you were in a {maha}–{antar} chapter — the "
+                f"{theme} stretch. What it did with you is yours to say, not "
+                f"mine. Does that period land?",
+                f"{month}. {maha}–{antar} was running, and that pairing pushes "
+                f"{theme} to the front. I'm not going to guess what came of it — "
+                f"do you recognise it?",
+                f"That one sits in {maha}–{antar}, from around {month}. {theme.capitalize()} "
+                f"is what that chapter leans on. Your call whether it fits.",
             )
         else:
-            body = (
-                f"{month} ke aas-paas chart mein {maha}–{antar} chapter chal raha tha — "
-                f"texture: {theme}. Kya hua, woh main claim nahi karti — "
-                f"kya yeh period pehchaan mein aata hai?"
+            variants = (
+                f"{month} ke aas-paas {maha}–{antar} chapter chal raha tha — "
+                f"{theme} wala daur. Usme hua kya, woh aapki baat hai, meri nahi. "
+                f"Pehchaan aata hai?",
+                f"{month}. {maha}–{antar} chal raha tha, aur ye jodi {theme} ko "
+                f"aage le aati hai. Main guess nahi karungi ki kya nikla — aapko "
+                f"yaad padta hai?",
+                f"Woh saal {maha}–{antar} mein aata hai, {month} ke aas-paas. "
+                f"Us chapter ka zor {theme} pe rehta hai. Fit hota hai ya nahi, "
+                f"aap batao.",
             )
+        body = variants[turn % len(variants)]
         emit_funnel_event("test_me_answered", phone_number=phone_number)
         data["bot_response"] = [{"type": "text", "text": body}]
         return data

@@ -15,12 +15,15 @@ BEAT_AWAITING_LANGUAGE = "awaiting_language"
 BEAT_AWAITING_NAME = "awaiting_name"
 BEAT_AWAITING_PLACE_CONFIRM = "awaiting_place_confirm"
 BEAT_1_AWAITING_CONFIRM = "beat1_awaiting_confirm"
+BEAT_TEST_ME_YEAR = "test_me_year"  # user-driven falsifiable proof (Beat 1.5)
 BEAT_2_AWAITING_ADVANCE = "beat2_awaiting_advance"  # undated fallback only
 BEAT_2A_AWAITING_CONFIRM = "beat2a_awaiting_confirm"
 BEAT_2B_AWAITING_CONFIRM = "beat2b_awaiting_confirm"
 BEAT_2B_ALT_AWAITING = "beat2b_alt_awaiting"
 BEAT_2C_AWAITING_DETAIL = "beat2c_awaiting_detail"
+BEAT_2C_SECOND_WINDOW = "beat2c_second_window"  # answerable 2nd dated ask
 BEAT_AWAITING_TOPIC = "awaiting_topic"
+BEAT_AWAITING_ITEMS = "awaiting_items"  # "name your two or three" before Beat 4
 BEAT_POST_FREE_DEEP = "post_free_deep"
 BEAT_AWAITING_PWYW_AMOUNT = "awaiting_pwyw_amount"
 BEAT_AWAITING_PWYW_CONFIRM = "awaiting_pwyw_confirm"
@@ -33,17 +36,21 @@ ACTIVE_INTRO_BEATS = frozenset(
         BEAT_AWAITING_NAME,
         BEAT_AWAITING_PLACE_CONFIRM,
         BEAT_1_AWAITING_CONFIRM,
+        BEAT_TEST_ME_YEAR,
         BEAT_2_AWAITING_ADVANCE,
         BEAT_2A_AWAITING_CONFIRM,
         BEAT_2B_AWAITING_CONFIRM,
         BEAT_2B_ALT_AWAITING,
         BEAT_2C_AWAITING_DETAIL,
+        BEAT_2C_SECOND_WINDOW,
         BEAT_AWAITING_TOPIC,
+        BEAT_AWAITING_ITEMS,
     }
 )
 
 MAX_LINES_PER_MESSAGE = 6
 MAX_DATED_WINDOWS_PER_SESSION = 2
+MAX_TEST_ME_CHALLENGES = 3
 
 # Button postbacks
 BTN_BEAT1_YES = "samara_beat1_yes"
@@ -59,8 +66,14 @@ PLACE_CAND_POSTBACKS = (BTN_PLACE_CAND_0, BTN_PLACE_CAND_1, BTN_PLACE_CAND_2)
 BTN_BEAT2_NEXT = "samara_beat2_next"
 BTN_BEAT2A_YES = "samara_beat2a_yes"
 BTN_BEAT2A_NO = "samara_beat2a_no"
+# Forced-choice 2a: two textures, no approval option.
+BTN_BEAT2A_OPT_A = "samara_beat2a_opt_a"
+BTN_BEAT2A_OPT_B = "samara_beat2a_opt_b"
+BTN_BEAT2A_NEITHER = "samara_beat2a_neither"
 BTN_BEAT2B_YES = "samara_beat2b_yes"
 BTN_BEAT2B_NO = "samara_beat2b_no"
+BTN_TEST_ME_SKIP = "samara_test_me_skip"
+BTN_ITEMS_SKIP = "samara_items_skip"
 BTN_TOPIC_CAREER = "samara_topic_career"
 BTN_TOPIC_LOVE = "samara_topic_love"
 BTN_TOPIC_MONEY = "samara_topic_money"
@@ -578,6 +591,207 @@ def beat2a_confirm_buttons(body: str, *, lang: str, profile: dict | None = None)
     )
 
 
+# Short forced-choice labels per engine theme (WhatsApp QR titles max 20 chars).
+# These are TEXTURES, not events — same honesty contract as _THEME_TEXTURE_*.
+_THEME_CHOICE_EN: dict[str, str] = {
+    "responsibility": "Held it together",
+    "zimmedari": "Held it together",
+    "ambition": "Wanted more, fast",
+    "letting go": "Let something go",
+    "tyag": "Let something go",
+    "growth": "Grew too fast",
+    "vistar": "Grew too fast",
+    "drive": "No finish line",
+    "urja": "No finish line",
+    "identity": "Didn't know me",
+    "pehchaan": "Didn't know me",
+    "emotions": "Felt it all",
+    "bhavna": "Felt it all",
+    "communication": "Overthought it",
+    "soch-baat": "Overthought it",
+    "harmony": "Kept the peace",
+    "sukh": "Kept the peace",
+    "change": "Ground shifted",
+    "badlav": "Ground shifted",
+}
+_THEME_CHOICE_HI: dict[str, str] = {
+    "responsibility": "Sab sambhala",
+    "zimmedari": "Sab sambhala",
+    "ambition": "Aur chahiye tha",
+    "letting go": "Kuch chhoot gaya",
+    "tyag": "Kuch chhoot gaya",
+    "growth": "Tezi se bada hua",
+    "vistar": "Tezi se bada hua",
+    "drive": "Bina rukey",
+    "urja": "Bina rukey",
+    "identity": "Khud ko dhundha",
+    "pehchaan": "Khud ko dhundha",
+    "emotions": "Andar se zyada",
+    "bhavna": "Andar se zyada",
+    "communication": "Zyada socha",
+    "soch-baat": "Zyada socha",
+    "harmony": "Shanti banayi",
+    "sukh": "Shanti banayi",
+    "change": "Zameen hili",
+    "badlav": "Zameen hili",
+}
+
+
+def theme_choice_label(theme: str | None, *, lang: str) -> str:
+    key = (theme or "").strip().lower()
+    if not key:
+        return ""
+    table = _THEME_CHOICE_EN if lang == "english" else _THEME_CHOICE_HI
+    if key in table:
+        return table[key]
+    for k, v in table.items():
+        if k in key or key in k:
+            return v
+    return ""
+
+
+def beat2a_choice_options(
+    quality_points: list[dict] | None, *, lang: str
+) -> list[str]:
+    """Two DISTINCT texture labels from engine themes. [] → fall back to Yes/No.
+
+    Newest first — a 22-year-old recognises age 19-22 far better than 13-16.
+    """
+    labels: list[str] = []
+    for point in reversed(list(quality_points or [])):
+        if not isinstance(point, dict):
+            continue
+        theme = (
+            point.get("theme_en") if lang == "english" else point.get("theme_hi")
+        ) or point.get("theme_en")
+        label = theme_choice_label(theme, lang=lang)
+        if label and label not in labels:
+            labels.append(label)
+        if len(labels) == 2:
+            break
+    return labels if len(labels) == 2 else []
+
+
+def beat2a_choice_buttons(body: str, *, lang: str, labels: list[str]) -> dict:
+    """Forced choice — two textures, no 'am I right?'. Third option keeps a real No."""
+    neither = "Neither, really" if lang == "english" else "Dono nahi"
+    return _quickreply(
+        strip_trailing_confirm_question(body),
+        "samara_beat2a_choice",
+        [
+            {"type": "text", "title": labels[0][:20], "postbackText": BTN_BEAT2A_OPT_A},
+            {"type": "text", "title": labels[1][:20], "postbackText": BTN_BEAT2A_OPT_B},
+            {"type": "text", "title": neither[:20], "postbackText": BTN_BEAT2A_NEITHER},
+        ],
+        caption="Pick the closer one",
+    )
+
+
+def parse_beat2a_choice(
+    messages: dict, labels: list[str] | None = None
+) -> str | None:
+    """Return 'a' | 'b' | 'neither' | None from the forced-choice QR."""
+    pid, title = _extract_postback(messages)
+    if pid == BTN_BEAT2A_OPT_A:
+        return "a"
+    if pid == BTN_BEAT2A_OPT_B:
+        return "b"
+    if pid == BTN_BEAT2A_NEITHER:
+        return "neither"
+    probe = (title or "").strip().lower()
+    if not probe and isinstance(messages, dict) and messages.get("type") == "text":
+        probe = ((messages.get("text") or {}).get("body") or "").strip().lower()
+    if not probe:
+        return None
+    if probe in ("neither, really", "neither", "dono nahi", "none", "na"):
+        return "neither"
+    for i, lab in enumerate((labels or [])[:2]):
+        if probe == str(lab).strip().lower()[:20]:
+            return "a" if i == 0 else "b"
+    if probe in ("1", "a"):
+        return "a"
+    if probe in ("2", "b"):
+        return "b"
+    return None
+
+
+def test_me_ask_buttons(body: str, *, lang: str) -> dict:
+    """Beat 1.5 — user names a year; typing is the point, Skip is the escape."""
+    skip = "Skip this" if lang == "english" else "Rehne do"
+    return _quickreply(
+        body,
+        "samara_test_me",
+        [{"type": "text", "title": skip[:20], "postbackText": BTN_TEST_ME_SKIP}],
+        caption="Type a year, or skip",
+    )
+
+
+def items_ask_buttons(body: str, *, lang: str) -> dict:
+    """'Name your two or three' — answered inside the free demo (RULE 6)."""
+    skip = "Skip" if lang == "english" else "Rehne do"
+    return _quickreply(
+        body,
+        "samara_items_ask",
+        [{"type": "text", "title": skip[:20], "postbackText": BTN_ITEMS_SKIP}],
+        caption="Type them, or skip",
+    )
+
+
+_SKIP_WORDS = frozenset(
+    {
+        "skip",
+        "skip this",
+        "rehne do",
+        "rehne don",
+        "chhodo",
+        "chodo",
+        "pass",
+        "next",
+        "aage",
+        "no",
+        "nahi",
+        "nope",
+        "later",
+        "baad mein",
+        "kuch nahi",
+        "nothing",
+        "-",
+    }
+)
+
+
+def is_skip_reply(messages: dict, *, postback: str) -> bool:
+    pid, title = _extract_postback(messages)
+    if pid == postback:
+        return True
+    probe = (title or "").strip().lower()
+    if not probe and isinstance(messages, dict) and messages.get("type") == "text":
+        probe = ((messages.get("text") or {}).get("body") or "").strip().lower()
+    return probe.rstrip("!.") in _SKIP_WORDS
+
+
+def parse_user_items(text: str, *, limit: int = 3) -> list[str]:
+    """Split 'reels page, print idea and freelance' into the user's own words.
+
+    Verbatim user strings only — never interpreted, never turned into claims.
+    """
+    raw = " ".join(str(text or "").replace("\n", ", ").split()).strip(" ,.")
+    if not raw:
+        return []
+    parts = re.split(r"\s*(?:,|;|/|\||\band\b|\baur\b|\+|\d\.)\s*", raw, flags=re.I)
+    items: list[str] = []
+    for part in parts:
+        cleaned = part.strip(" ,.-").strip()
+        if len(cleaned) < 2:
+            continue
+        if cleaned.lower() in items:
+            continue
+        items.append(cleaned[:60])
+        if len(items) >= limit:
+            break
+    return items
+
+
 def beat2b_confirm_buttons(body: str, *, lang: str) -> dict:
     if lang == "english":
         yes_t, no_t = "Yes, something did", "No"
@@ -884,13 +1098,58 @@ def returning_menu_buttons(
     )
 
 
+BTN_PWYW_AMOUNT_PREFIX = "samara_pwyw_amt_"
+
+
+def pwyw_button_amounts(amount_inr: float | None = None) -> tuple[int, int]:
+    """Two tappable PWYW amounts. Default (39, 99); tracks the configured min."""
+    from kisna_chatbot.utils.pwyw_amount import min_payment_inr
+
+    raw = float(amount_inr) if amount_inr and float(amount_inr) > 0 else min_payment_inr()
+    low = max(1, int(round(raw)))
+    high = 99 if low < 99 else int(round(low * 2.5))
+    return low, high
+
+
+def parse_pwyw_amount_button(messages: dict) -> float | None:
+    """Amount from a tapped ₹ quick-reply. Typed amounts are parsed elsewhere."""
+    pid, title = _extract_postback(messages)
+    if pid.startswith(BTN_PWYW_AMOUNT_PREFIX):
+        raw = pid[len(BTN_PWYW_AMOUNT_PREFIX) :]
+        try:
+            val = float(raw)
+        except ValueError:
+            return None
+        return val if val > 0 else None
+    # Gupshup sometimes delivers only the button title.
+    m = re.fullmatch(r"\s*₹\s*(\d+(?:\.\d+)?)\s*", title or "")
+    if m:
+        try:
+            val = float(m.group(1))
+        except ValueError:
+            return None
+        return val if val > 0 else None
+    return None
+
+
 def paywall_buttons(*, lang: str, body: str, amount_inr: float | None = None) -> dict:
-    """Door QR — Later only; user types PWYW amount (no fixed ₹ buttons)."""
+    """Door QR — tappable ₹ amounts + Later. Typing any other amount still works."""
     later_t = "Later" if lang == "english" else "Baad mein"
+    low, high = pwyw_button_amounts(amount_inr)
     return _quickreply(
         body,
         "samara_paywall",
         [
+            {
+                "type": "text",
+                "title": f"₹{low}",
+                "postbackText": f"{BTN_PWYW_AMOUNT_PREFIX}{low}",
+            },
+            {
+                "type": "text",
+                "title": f"₹{high}",
+                "postbackText": f"{BTN_PWYW_AMOUNT_PREFIX}{high}",
+            },
             {"type": "text", "title": later_t, "postbackText": BTN_PAYWALL_LATER},
         ],
         caption="Choose one",

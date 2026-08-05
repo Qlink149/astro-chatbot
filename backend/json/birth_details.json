@@ -17,6 +17,16 @@
                 "text": "Share date, birth time (or say you don't know), and place of birth as free text (city + state/country). If time is unknown, Lagna/ascendant and precise house-based timing can't be given — a meaningful Moon + dasha reading is still possible."
               },
               {
+                "type": "TextInput",
+                "name": "preferred_name",
+                "label": "What should I call you?",
+                "helper-text": "First name is enough.",
+                "input-type": "text",
+                "min-chars": 2,
+                "max-chars": 30,
+                "required": false
+              },
+              {
                 "type": "DatePicker",
                 "name": "birth_date",
                 "label": "Date of Birth",
@@ -86,7 +96,8 @@
                     "birth_minute_input": "${form.birth_minute_input}",
                     "birth_ampm": "${form.birth_ampm}",
                     "unknown_time": "${form.unknown_time}",
-                    "birth_place": "${form.birth_place}"
+                    "birth_place": "${form.birth_place}",
+                    "preferred_name": "${form.preferred_name}"
                   }
                 }
               }

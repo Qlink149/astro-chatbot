@@ -252,56 +252,93 @@ class TestEndToEndFlow:
                     "birth_place": "jaipur",
                 }),
             }
-            with patch(
-                "kisna_chatbot.processors.samara_reading_agent.resolve_place_candidates",
-                return_value=[{
-                    "display": "Jaipur, Rajasthan, India",
-                    "name": "Jaipur",
-                    "admin1": "Rajasthan",
-                    "country": "India",
-                    "cc": "IN",
-                    "lat": 26.9124,
-                    "lon": 75.7873,
-                    "score": 100,
-                    "population": 3000000,
-                }],
+            with (
+                patch(
+                    "kisna_chatbot.processors.samara_reading_agent.resolve_place_candidates",
+                    return_value=[{
+                        "display": "Jaipur, Rajasthan, India",
+                        "name": "Jaipur",
+                        "admin1": "Rajasthan",
+                        "country": "India",
+                        "cc": "IN",
+                        "lat": 26.9124,
+                        "lon": 75.7873,
+                        "score": 100,
+                        "population": 3000000,
+                    }],
+                ),
+                patch.object(mod, "timezone_offset_for", return_value=5.5),
             ):
                 out = await agent.process(data)
 
-            # Place confirm first — chart not computed yet
-            assert profile.get("chart_json") is None
-            assert profile.get("conversation_beat") == "awaiting_place_confirm"
-            resp = out["bot_response"]
-            assert any(r.get("type") == "quickreply" for r in resp)
-
-            # Confirm place → chart + language
-            data2 = {
-                "client_id": "samara",
-                "phone_number": "919999900010",
-                "user_profile": profile,
-                "messages": {
-                    "type": "interactive",
-                    "interactive": {
-                        "button_reply": {
-                            "id": "samara_place_yes",
-                            "title": "Yes",
-                        }
-                    },
-                },
-            }
-            with patch.object(mod, "timezone_offset_for", return_value=5.5):
-                out2 = await agent.process(data2)
-
+            # Unambiguous place → no confirmation round-trip; chart straight away.
             chart = profile["chart_json"]
             assert chart is not None
             assert chart["meta"]["has_birth_time"] is True
             assert chart["meta"]["birth_time"] == "07:32"
-            resp2 = out2["bot_response"]
-            assert len(resp2) == 1
-            assert resp2[0]["type"] == "quickreply"
-            ids = [o["postbackText"] for o in resp2[0]["options"]]
+            resp = out["bot_response"]
+            assert len(resp) == 1
+            assert resp[0]["type"] == "quickreply"
+            ids = [o["postbackText"] for o in resp[0]["options"]]
             assert "samara_lang_en" in ids
             assert "samara_lang_hi" in ids
+            # The resolved place is echoed so a wrong city is still visible.
+            assert "Jaipur" in resp[0]["text"]
+            assert "start over" in resp[0]["text"].lower()
+
+        _run(go())
+
+    def test_ambiguous_place_still_asks_before_computing(self):
+        """Auto-confirm is only for a clear winner — ties must still be asked."""
+        async def go():
+            agent = mod.SamaraReadingAgent()
+            profile = {"username": "Rahul", "chat_history": []}
+            data = {
+                "client_id": "samara",
+                "phone_number": "919999900012",
+                "user_profile": profile,
+                "messages": _flow_reply({
+                    "flow_kind": "birth_details",
+                    "birth_date": "1990-05-15",
+                    "birth_hour_input": "7",
+                    "birth_minute_input": "32",
+                    "birth_ampm": "AM",
+                    "unknown_time": [],
+                    "birth_place": "springfield",
+                }),
+            }
+            tie = [
+                {
+                    "display": "Springfield, Illinois, United States",
+                    "name": "Springfield",
+                    "admin1": "Illinois",
+                    "country": "United States",
+                    "lat": 39.8,
+                    "lon": -89.6,
+                    "score": 90,
+                    "population": 110000,
+                },
+                {
+                    "display": "Springfield, Missouri, United States",
+                    "name": "Springfield",
+                    "admin1": "Missouri",
+                    "country": "United States",
+                    "lat": 37.2,
+                    "lon": -93.3,
+                    "score": 89,
+                    "population": 160000,
+                },
+            ]
+            with patch(
+                "kisna_chatbot.processors.samara_reading_agent.resolve_place_candidates",
+                return_value=tie,
+            ):
+                out = await agent.process(data)
+            assert profile.get("chart_json") is None
+            assert profile.get("conversation_beat") == "awaiting_place_confirm"
+            assert any(
+                r.get("type") in ("quickreply", "list") for r in out["bot_response"]
+            )
 
         _run(go())
 
@@ -324,36 +361,24 @@ class TestEndToEndFlow:
                     "birth_place": "jaipur",
                 }),
             }
-            with patch(
-                "kisna_chatbot.processors.samara_reading_agent.resolve_place_candidates",
-                return_value=[{
-                    "display": "Jaipur, Rajasthan, India",
-                    "name": "Jaipur",
-                    "admin1": "Rajasthan",
-                    "country": "India",
-                    "cc": "IN",
-                    "lat": 26.9124,
-                    "lon": 75.7873,
-                    "score": 100,
-                    "population": 3000000,
-                }],
+            with (
+                patch(
+                    "kisna_chatbot.processors.samara_reading_agent.resolve_place_candidates",
+                    return_value=[{
+                        "display": "Jaipur, Rajasthan, India",
+                        "name": "Jaipur",
+                        "admin1": "Rajasthan",
+                        "country": "India",
+                        "cc": "IN",
+                        "lat": 26.9124,
+                        "lon": 75.7873,
+                        "score": 100,
+                        "population": 3000000,
+                    }],
+                ),
+                patch.object(mod, "timezone_offset_for", return_value=5.5),
             ):
                 out = await agent.process(data)
-            assert profile.get("chart_json") is None
-            profile["pending_place"] = profile.get("place_candidates")[0]
-            data2 = {
-                "client_id": "samara",
-                "phone_number": "919999900011",
-                "user_profile": profile,
-                "messages": {
-                    "type": "interactive",
-                    "interactive": {
-                        "button_reply": {"id": "samara_place_yes", "title": "Yes"}
-                    },
-                },
-            }
-            with patch.object(mod, "timezone_offset_for", return_value=5.5):
-                out = await agent.process(data2)
             chart = profile.get("chart_json")
             assert chart is not None
             assert chart["meta"]["chart_type"] == "surya_kundli"

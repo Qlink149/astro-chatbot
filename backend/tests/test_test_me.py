@@ -42,14 +42,83 @@ def test_lookup_antardasha_covering_year():
     assert lookup_antardasha_covering_year(rows, 1990) is None
 
 
-def test_second_challenge_flag():
+def test_challenge_cap_reached():
     agent = SamaraReadingAgent()
     profile = {"test_me_used": True, "user_language": "english", "chart_json": {}}
     data: dict = {}
     out = agent._handle_test_me_year(data, profile, "919999999999", "what about 2015")
     assert out is not None
     text = out["bot_response"][0]["text"].lower()
-    assert "one challenge" in text or "enough" in text
+    assert "enough" in text
+
+
+def test_three_challenges_allowed_then_capped():
+    from kisna_chatbot.utils.samara_beats import MAX_TEST_ME_CHALLENGES
+
+    agent = SamaraReadingAgent()
+    rows = [
+        {
+            "start": f"{y}-03-01",
+            "end": f"{y + 1}-03-01",
+            "maha_planet_en": "Saturn",
+            "antar_planet_en": "Venus",
+            "window_label_month_en": f"March {y}",
+            "window_label_month_hi": f"March {y} ke aas-paas",
+        }
+        for y in (2015, 2016, 2017, 2018)
+    ]
+    profile = {
+        "user_language": "english",
+        "test_me_offered": True,
+        "chart_json": {"antardasha_timeline": rows},
+    }
+    for i, year in enumerate((2015, 2016, 2017), start=1):
+        data: dict = {}
+        agent._handle_test_me_year(data, profile, "919999999999", str(year))
+        assert profile["test_me_count"] == i
+        assert f"March {year}" in data["bot_response"][0]["text"]
+    assert profile["test_me_count"] == MAX_TEST_ME_CHALLENGES
+    assert agent._test_me_available(profile) is False
+    data = {}
+    agent._handle_test_me_year(data, profile, "919999999999", "2018")
+    assert "enough" in data["bot_response"][0]["text"].lower()
+
+
+def test_missing_year_is_an_honest_miss_never_a_bluff():
+    agent = SamaraReadingAgent()
+    profile = {
+        "user_language": "english",
+        "test_me_offered": True,
+        "chart_json": {
+            "antardasha_timeline": [
+                {
+                    "start": "2015-03-01",
+                    "end": "2016-03-01",
+                    "maha_planet_en": "Saturn",
+                    "antar_planet_en": "Venus",
+                    "window_label_month_en": "March 2015",
+                }
+            ]
+        },
+    }
+    data: dict = {}
+    agent._handle_test_me_year(data, profile, "919999999999", "1990")
+    text = data["bot_response"][0]["text"].lower()
+    assert "don't have a clear antardasha window for 1990" in text
+    assert "make one up" in text
+    # A miss must not burn a challenge.
+    assert int(profile.get("test_me_count") or 0) == 0
+
+
+def test_test_me_unavailable_without_engine_rows():
+    agent = SamaraReadingAgent()
+    assert agent._test_me_available({"chart_json": {}}) is False
+    assert (
+        agent._test_me_available(
+            {"chart_json": {"antardasha_timeline": [{"start": "2015-01-01"}]}}
+        )
+        is True
+    )
 
 
 def test_no_event_assertion_in_offer_copy():
@@ -87,5 +156,46 @@ def test_year_reply_uses_engine_only_no_event_claim():
     out = agent._handle_test_me_year(data, profile, "919999999999", "what about 2015?")
     text = out["bot_response"][0]["text"]
     assert "March 2015" in text
-    assert "won't claim what happened" in text.lower() or "claim" in text.lower()
-    assert profile.get("test_me_used") is True
+    assert _disclaims_the_event(text)
+    assert int(profile.get("test_me_count") or 0) == 1
+
+
+# Every rotation variant must hand the event back to the user.
+_EVENT_DISCLAIMERS = (
+    "yours to say, not mine",
+    "not going to guess",
+    "your call whether it fits",
+    "aapki baat hai, meri nahi",
+    "guess nahi karungi",
+    "fit hota hai ya nahi",
+)
+
+
+def _disclaims_the_event(text: str) -> bool:
+    return any(d in text.lower() for d in _EVENT_DISCLAIMERS)
+
+
+def test_every_challenge_variant_disclaims_the_event():
+    agent = SamaraReadingAgent()
+    rows = [
+        {
+            "start": f"{y}-03-01",
+            "end": f"{y + 1}-03-01",
+            "maha_planet_en": "Saturn",
+            "antar_planet_en": "Venus",
+            "window_label_month_en": f"March {y}",
+            "window_label_month_hi": f"March {y} ke aas-paas",
+        }
+        for y in (2015, 2016, 2017)
+    ]
+    for lang in ("english", "hindi"):
+        profile = {
+            "user_language": lang,
+            "test_me_offered": True,
+            "chart_json": {"antardasha_timeline": rows},
+        }
+        for year in (2015, 2016, 2017):
+            data: dict = {}
+            agent._handle_test_me_year(data, profile, "919999999999", str(year))
+            body = data["bot_response"][0]["text"]
+            assert _disclaims_the_event(body), (lang, year, body)

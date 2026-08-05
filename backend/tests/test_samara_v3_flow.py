@@ -28,6 +28,7 @@ from kisna_chatbot.utils.samara_beats import (
     BEAT_2B_AWAITING_CONFIRM,
     BEAT_2B_ALT_AWAITING,
     BEAT_2C_AWAITING_DETAIL,
+    BEAT_AWAITING_ITEMS,
     BEAT_AWAITING_TOPIC,
     BEAT_POST_FREE_DEEP,
     BEAT_TRUST_RECOVERY,
@@ -370,11 +371,40 @@ def test_topic_choice_sends_free_deep_and_sets_flag():
                 },
             }
             out = await agent.process(data)
+        # Topic pick now collects the user's own items first — still free,
+        # still pre-gate (RULE 6): the free deep answer consumes the reply.
+        assert profile["chosen_topic"] == "career"
+        assert profile["conversation_beat"] == BEAT_AWAITING_ITEMS
+        assert profile.get("free_deep_answer_used") is not True
+        assert out["bot_response"][-1]["msgid"] == "samara_items_ask"
+
+        # Answering (or skipping) delivers the complete free demo.
+        with patch.object(
+            mod,
+            "complete_chat",
+            new=AsyncMock(
+                return_value=(
+                    "Career looks active now.\n"
+                    "The open question is when the next shift lands."
+                )
+            ),
+        ):
+            out = await agent.process(
+                {
+                    "client_id": "samara",
+                    "phone_number": "919999900001",
+                    "user_profile": profile,
+                    "messages": {
+                        "id": "wamid.items",
+                        "type": "text",
+                        "text": {"body": "freelance work, a side project"},
+                    },
+                }
+            )
         assert profile["free_deep_answer_used"] is True
         assert profile["conversation_beat"] == BEAT_POST_FREE_DEEP
-        assert profile["chosen_topic"] == "career"
+        assert profile["user_items"] == ["freelance work", "a side project"]
         assert out["bot_response"][0]["type"] == "text"
-        assert "?" not in out["bot_response"][0]["text"][-1:] or True  # statement preferred
         # Complete demo — not cliff-only QR
         assert out["bot_response"][0].get("msgid") != "samara_want_more"
 

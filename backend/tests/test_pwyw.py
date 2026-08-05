@@ -61,13 +61,41 @@ def test_min_reject_and_large_confirm():
     assert big.amount_inr == 6000.0
 
 
-def test_paywall_buttons_later_only_no_fixed_rupee():
+def test_paywall_buttons_offer_tappable_amounts_plus_later():
+    from kisna_chatbot.utils.samara_beats import (
+        BTN_PAYWALL_LATER,
+        parse_pwyw_amount_button,
+    )
+
     qr = paywall_buttons(lang="hindi", body="door", amount_inr=39)
     opts = qr.get("options") or []
-    titles = " ".join(o.get("title", "") for o in opts)
-    assert "Baad mein" in titles or "Later" in titles
-    assert "₹" not in titles
-    assert len(opts) == 1
+    titles = [o.get("title", "") for o in opts]
+    # Paying must be tappable — typing is no longer the only path.
+    assert titles == ["₹39", "₹99", "Baad mein"]
+    assert len(opts) == 3
+    assert opts[-1]["postbackText"] == BTN_PAYWALL_LATER
+    for opt, expected in zip(opts[:2], (39.0, 99.0)):
+        tapped = parse_pwyw_amount_button(
+            {
+                "type": "interactive",
+                "interactive": {
+                    "button_reply": {
+                        "id": opt["postbackText"],
+                        "title": opt["title"],
+                    }
+                },
+            }
+        )
+        assert tapped == expected
+
+
+def test_pwyw_amount_button_falls_back_to_title():
+    from kisna_chatbot.utils.samara_beats import parse_pwyw_amount_button
+
+    assert parse_pwyw_amount_button(
+        {"type": "interactive", "interactive": {"button_reply": {"id": "", "title": "₹99"}}}
+    ) == 99.0
+    assert parse_pwyw_amount_button({"type": "text", "text": {"body": "39"}}) is None
 
 
 def test_create_rejects_under_min(monkeypatch):
