@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import re
+
+logger = logging.getLogger(__name__)
+
+_DEVANAGARI = re.compile(r"[\u0900-\u097F]")
 
 # Common meta / planning openers models emit before the real reply.
 _META_LINE_START = re.compile(
@@ -67,3 +72,32 @@ def strip_llm_meta(text: str | None) -> str:
     out = "\n".join(kept).strip()
     out = re.sub(r"\n{3,}", "\n\n", out)
     return out or raw
+
+
+def enforce_language_script(
+    text: str | None,
+    lang: str,
+    *,
+    fallback: str = "",
+) -> str:
+    """English mode must never ship Devanagari; Hindi may mix Roman."""
+    raw = (text or "").strip()
+    if not raw or lang == "hindi":
+        return raw
+    if not _DEVANAGARI.search(raw):
+        return raw
+    if fallback:
+        logger.warning(
+            "Devanagari in English LLM output — using fallback",
+            extra={"preview": raw[:120]},
+        )
+        return fallback.strip()
+    kept = [line for line in raw.split("\n") if not _DEVANAGARI.search(line)]
+    cleaned = "\n".join(kept).strip()
+    if cleaned:
+        logger.warning(
+            "Devanagari stripped from English LLM output",
+            extra={"preview": raw[:120]},
+        )
+        return cleaned
+    return fallback.strip() if fallback else raw

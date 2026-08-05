@@ -1121,8 +1121,11 @@ def parse_pwyw_amount_button(messages: dict) -> float | None:
         except ValueError:
             return None
         return val if val > 0 else None
-    # Gupshup sometimes delivers only the button title.
-    m = re.fullmatch(r"\s*₹\s*(\d+(?:\.\d+)?)\s*", title or "")
+    # Gupshup sometimes delivers only the button title (may include credit suffix).
+    m = re.fullmatch(
+        r"\s*₹\s*(\d+(?:\.\d+)?)(?:\s*[·•]\s*\d+\s+\w+)?\s*",
+        title or "",
+    )
     if m:
         try:
             val = float(m.group(1))
@@ -1132,22 +1135,58 @@ def parse_pwyw_amount_button(messages: dict) -> float | None:
     return None
 
 
+def beat2b_date_ask_body(*, window: dict, lang: str, user_choice: str = "") -> str:
+    """Deterministic Beat 2b body — single language, no LLM leak."""
+    if lang == "english":
+        month = (
+            window.get("window_label_month_en")
+            or window.get("window_label_en")
+            or ""
+        )
+        choice = (user_choice or "").strip()
+        echo = f"{choice} — that fits. " if choice else ""
+        return (
+            f"{echo}There's a real turning point around {month}. "
+            f"Did something shift then?"
+        )
+    month = (
+        window.get("window_label_month_hi")
+        or window.get("window_label_hi")
+        or ""
+    )
+    choice = (user_choice or "").strip()
+    echo = f"{choice} — sahi baat hai. " if choice else ""
+    return (
+        f"{echo}Chart mein ek bada mod — {month}. Us waqt kuch badla tha?"
+    )
+
+
 def paywall_buttons(*, lang: str, body: str, amount_inr: float | None = None) -> dict:
     """Door QR — tappable ₹ amounts + Later. Typing any other amount still works."""
+    from kisna_chatbot.utils.pwyw_amount import credits_for_amount
+
     later_t = "Later" if lang == "english" else "Baad mein"
     low, high = pwyw_button_amounts(amount_inr)
+    low_c = credits_for_amount(float(low))
+    high_c = credits_for_amount(float(high))
+    if lang == "english":
+        low_title = f"₹{low} · {low_c} answers"
+        high_title = f"₹{high} · {high_c} answers"
+    else:
+        low_title = f"₹{low} · {low_c} jawab"
+        high_title = f"₹{high} · {high_c} jawab"
     return _quickreply(
         body,
         "samara_paywall",
         [
             {
                 "type": "text",
-                "title": f"₹{low}",
+                "title": low_title[:20],
                 "postbackText": f"{BTN_PWYW_AMOUNT_PREFIX}{low}",
             },
             {
                 "type": "text",
-                "title": f"₹{high}",
+                "title": high_title[:20],
                 "postbackText": f"{BTN_PWYW_AMOUNT_PREFIX}{high}",
             },
             {"type": "text", "title": later_t, "postbackText": BTN_PAYWALL_LATER},

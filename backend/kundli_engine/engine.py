@@ -23,6 +23,7 @@ tell the user the limitation instead of faking certainty.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from typing import Optional
 
@@ -166,6 +167,7 @@ def _build_antardasha_timeline(
     place,
     birth_year: int,
     current_age: int,
+    today: date | None = None,
 ) -> list[dict]:
     """Flat chronological antardasha (bhukti) rows from PyJHora.
 
@@ -184,6 +186,10 @@ def _build_antardasha_timeline(
 
     if not rows:
         return []
+
+    if today is None:
+        today = date.today()
+    today_str = today.isoformat()
 
     timeline: list[dict] = []
     for i, row in enumerate(rows):
@@ -215,10 +221,10 @@ def _build_antardasha_timeline(
             age_start = sy - birth_year
             age_end = end_year - birth_year
             starts_before_birth = sy < birth_year
-            # Lived adult past only: ended by now, and reached adulthood.
+            # Lived adult past only: period fully ended before today, adulthood reached.
             is_relevant = (
                 age_end is not None
-                and age_end <= current_age
+                and end_str < today_str
                 and age_end >= 15
             )
             label_en, label_hi = _window_label_from_ymd(sy, sm)
@@ -366,7 +372,7 @@ def compute_chart(birth: BirthDetails) -> dict:
     # Noon-placeholder JD is too unreliable for dated anchors.
     if birth.has_time:
         antardasha_timeline = _build_antardasha_timeline(
-            jd, place, birth.year, current_age
+            jd, place, birth.year, current_age, today=date.today()
         )
         turning_points = _curate_turning_points(antardasha_timeline)
         upcoming_periods = _curate_upcoming_periods(

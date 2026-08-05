@@ -2,7 +2,36 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
+
+
+def current_antardasha_row(
+    chart: dict | None,
+    today: date | None = None,
+) -> dict[str, Any] | None:
+    """Row from antardasha_timeline where start <= today <= end."""
+    if not chart:
+        return None
+    today = today or date.today()
+    today_s = today.isoformat()
+    for row in chart.get("antardasha_timeline") or []:
+        if not isinstance(row, dict):
+            continue
+        start = str(row.get("start") or "")
+        end = str(row.get("end") or "")
+        if start and end and start <= today_s <= end:
+            return {
+                "maha_planet_en": row.get("maha_planet_en"),
+                "maha_planet_hi": row.get("maha_planet_hi"),
+                "antar_planet_en": row.get("antar_planet_en"),
+                "antar_planet_hi": row.get("antar_planet_hi"),
+                "start": start,
+                "end": end,
+                "window_label_month_en": row.get("window_label_month_en"),
+                "window_label_month_hi": row.get("window_label_month_hi"),
+            }
+    return None
 
 
 def slim_chart_for_beat(chart: dict | None, beat_or_purpose: str) -> dict[str, Any]:
@@ -39,6 +68,9 @@ def slim_chart_for_beat(chart: dict | None, beat_or_purpose: str) -> dict[str, A
     if purpose in ("beat4", "paid_deep", "followup", "solicited", "muhurat"):
         out["turning_points"] = chart.get("turning_points") or []
         out["upcoming_periods"] = chart.get("upcoming_periods") or []
+        current = current_antardasha_row(chart)
+        if current:
+            out["current_period"] = current
         out["dasha_timeline"] = _slim_dasha(chart.get("dasha_timeline"), limit=6)
         if chart.get("houses"):
             # Drop exact degrees; keep house table if present

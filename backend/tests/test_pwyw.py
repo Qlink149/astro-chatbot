@@ -67,12 +67,13 @@ def test_paywall_buttons_offer_tappable_amounts_plus_later():
         parse_pwyw_amount_button,
     )
 
-    qr = paywall_buttons(lang="hindi", body="door", amount_inr=39)
+    qr = paywall_buttons(lang="english", body="door", amount_inr=39)
     opts = qr.get("options") or []
     titles = [o.get("title", "") for o in opts]
     # Paying must be tappable — typing is no longer the only path.
-    assert titles == ["₹39", "₹99", "Baad mein"]
+    assert titles == ["₹39 · 10 answers", "₹99 · 25 answers", "Later"]
     assert len(opts) == 3
+    assert all(len(t) <= 20 for t in titles[:2])
     assert opts[-1]["postbackText"] == BTN_PAYWALL_LATER
     for opt, expected in zip(opts[:2], (39.0, 99.0)):
         tapped = parse_pwyw_amount_button(
@@ -95,7 +96,32 @@ def test_pwyw_amount_button_falls_back_to_title():
     assert parse_pwyw_amount_button(
         {"type": "interactive", "interactive": {"button_reply": {"id": "", "title": "₹99"}}}
     ) == 99.0
+    assert parse_pwyw_amount_button(
+        {
+            "type": "interactive",
+            "interactive": {
+                "button_reply": {"id": "", "title": "₹99 · 25 answers"}
+            },
+        }
+    ) == 99.0
     assert parse_pwyw_amount_button({"type": "text", "text": {"body": "39"}}) is None
+
+
+def test_door_gate_body_mentions_type_any_amount():
+    from datetime import date
+
+    from kisna_chatbot.utils.samara_gate import door_gate_body
+
+    profile = {
+        "user_language": "english",
+        "chosen_topic": "career",
+        "chart_json": {
+            "upcoming_periods": [{"start": "2027-02-11", "antar_planet_en": "Mars"}],
+            "dasha_timeline": [{"planet_en": "Venus", "phase": "current"}],
+        },
+    }
+    body = door_gate_body(profile, amount_inr=39, today=date(2026, 8, 5))
+    assert "type any amount" in body.lower()
 
 
 def test_create_rejects_under_min(monkeypatch):

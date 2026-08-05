@@ -47,7 +47,10 @@ def test_beat1_prompt_forbids_month_precision():
 
 
 def test_beat2b_prompt_uses_month_labels():
-    assert "window_label_month_en" in SAMARA_BEAT2B_DATE_ASK_PROMPT
+    assert "{window_label_month}" in SAMARA_BEAT2B_DATE_ASK_PROMPT
+    task = SAMARA_BEAT2B_DATE_ASK_PROMPT.split("TASK", 1)[-1]
+    assert "window_label_month_hi" not in task
+    assert "hindi:" not in task.lower()
     assert "month-level" in SAMARA_BEAT2B_DATE_ASK_PROMPT.lower()
 
 

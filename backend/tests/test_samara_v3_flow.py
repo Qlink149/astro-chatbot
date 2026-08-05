@@ -179,9 +179,20 @@ def test_birth_details_asks_language_before_reading():
         fake_birth = MagicMock()
         BirthDetails = MagicMock(return_value=fake_birth)
         compute_chart = MagicMock(return_value=MIN_CHART)
-        with patch.object(mod, "geocode_place", return_value=(26.9, 75.8)), patch.object(
-            mod, "timezone_offset_for", return_value=5.5
-        ), patch.object(mod, "_kundli", return_value=(BirthDetails, compute_chart)):
+        with patch.object(
+            mod,
+            "resolve_place_candidates",
+            return_value=[
+                {
+                    "display": "Jaipur, Rajasthan",
+                    "name": "Jaipur",
+                    "lat": 26.9,
+                    "lon": 75.8,
+                }
+            ],
+        ), patch.object(mod, "timezone_offset_for", return_value=5.5), patch.object(
+            mod, "_kundli", return_value=(BirthDetails, compute_chart)
+        ):
             out = await agent.process(data)
         assert profile.get("chart_json")
         assert profile.get("user_language") is None

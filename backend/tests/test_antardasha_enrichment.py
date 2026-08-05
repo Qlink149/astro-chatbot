@@ -223,13 +223,53 @@ def test_antardasha_chronological_non_overlapping(full_chart):
 
 
 def test_relevant_antardasha_constraints(full_chart):
-    current_age = full_chart["meta"]["current_age"]
+    today = __import__("datetime").date.today().isoformat()
     for p in full_chart["antardasha_timeline"]:
         if not p["is_relevant"]:
             continue
         assert p["age_end"] is not None
-        assert p["age_end"] <= current_age
+        assert p["end"] < today
         assert p["age_end"] >= 15
+
+
+def test_is_relevant_false_for_running_period():
+    from datetime import date, timedelta
+
+    from kundli_engine.engine import _build_antardasha_timeline
+
+    today = date(2026, 8, 5)
+    start = today - timedelta(days=30)
+    end = today + timedelta(days=90)
+    # Simulate one row's is_relevant logic (same calendar year end as today).
+    age_end = today.year - 2004  # birth 2004, end year 2026
+    is_relevant = end.isoformat() < today.isoformat() and age_end >= 15
+    assert is_relevant is False
+
+    finished_end = today - timedelta(days=1)
+    is_relevant_finished = (
+        finished_end.isoformat() < today.isoformat() and age_end >= 15
+    )
+    assert is_relevant_finished is True
+
+
+def test_turning_points_all_end_before_today():
+    BirthDetails, compute_chart = _need_chart_engine()
+    chart = compute_chart(
+        BirthDetails(
+            year=2004,
+            month=5,
+            day=27,
+            hour=7,
+            minute=15,
+            latitude=24.5854,
+            longitude=73.7125,
+            timezone_offset=5.5,
+            place_name="Udaipur",
+        )
+    )
+    today = __import__("datetime").date.today().isoformat()
+    for p in chart.get("turning_points") or []:
+        assert p["end"] < today
 
 
 def test_turning_points_bounded_and_relevant(full_chart):

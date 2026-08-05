@@ -19,7 +19,6 @@ from kisna_chatbot.prompts.samara_reading import (
     SAMARA_BEAT1_IDENTITY_PROMPT,
     SAMARA_BEAT2_PAST_PROMPT,
     SAMARA_BEAT2A_THEME_PROMPT,
-    SAMARA_BEAT2B_DATE_ASK_PROMPT,
     SAMARA_BEAT2C_REFLECT_PROMPT,
     SAMARA_BEAT4_DEEP_PROMPT,
     SAMARA_FOLLOWUP_SYSTEM_PROMPT,
@@ -55,7 +54,7 @@ from kisna_chatbot.utils.nasa_copy_guard import (
     APPROVED_NASA_LINEAGE,
     sanitize_nasa_endorsement,
 )
-from kisna_chatbot.utils.llm_output_guard import strip_llm_meta
+from kisna_chatbot.utils.llm_output_guard import enforce_language_script, strip_llm_meta
 from kisna_chatbot.utils.samara_beats import (
     ACK_RE_OFFER_TEXT_EN,
     ACK_RE_OFFER_TEXT_HI,
@@ -90,6 +89,7 @@ from kisna_chatbot.utils.samara_beats import (
     beat2a_confirm_buttons,
     beat2a_quality_points,
     beat2b_confirm_buttons,
+    beat2b_date_ask_body,
     claim_beat_transition,
     dated_anchors_available,
     detect_language_switch,
@@ -127,6 +127,7 @@ from kisna_chatbot.utils.samara_beats import (
     returning_menu_buttons,
     soft_past_range_from_chart,
     strip_exact_dates_from_beat1,
+    strip_trailing_confirm_question,
     test_me_ask_buttons,
     text_responses,
     topic_label_for,
@@ -339,7 +340,8 @@ def _language_quickreply_response(place_name: str = "") -> dict:
     if place:
         text = (
             f"🌸 {place} — kundli ready.\n"
-            "(Agar place galat hai, 'start over' likh dijiye.)\n\n"
+            "(If the place is wrong, type 'start over'. / "
+            "Agar place galat hai, 'start over' likh dijiye.)\n\n"
             "Reading kis bhasha mein chahiye? Please pick one below.\n"
             "In which language would you like your reading?"
         )
@@ -1667,6 +1669,8 @@ class SamaraReadingAgent(Processor):
                 },
             )
         clean = strip_llm_meta(clean)
+        if profile is not None and purpose in reading_purposes:
+            clean = enforce_language_script(clean, _lang(profile))
         if profile is not None and chosen_arch is not None:
             record_outbound_variety(profile, clean, chosen_arch)
             from kisna_chatbot.utils.samara_focus import update_focus_after_bot
@@ -2054,38 +2058,12 @@ class SamaraReadingAgent(Processor):
         ) + 1
         profile["beat2_pending_window"] = window
 
-        instruction = SAMARA_BEAT2B_DATE_ASK_PROMPT.format(
-            user_name=display_user_name(profile),
-            user_language=lang,
-            window_label_month_en=(
-                window.get("window_label_month_en")
-                or window.get("window_label_en")
-                or ""
-            ),
-            window_label_month_hi=(
-                window.get("window_label_month_hi")
-                or window.get("window_label_hi")
-                or ""
-            ),
-            theme_en=window.get("theme_en") or "",
-            theme_hi=window.get("theme_hi") or "",
+        lang = _lang(profile)
+        text = beat2b_date_ask_body(
+            window=window,
+            lang=lang,
             user_choice=str(profile.get("beat2a_chosen_texture") or ""),
         )
-        try:
-            text = await self._llm(
-                instruction=instruction,
-                user_content="Write Beat 2b dated ask now (ask only).",
-                phone_number=phone_number,
-                agent_display_name="SamaraBeat2b",
-                max_output_tokens=400,
-                purpose="beat2b",
-                profile=profile,
-                archetype_prefer="question",
-            )
-        except Exception:
-            logger.exception("Beat2b LLM failed", extra={"phone_number": phone_number})
-            data["bot_response"] = [{"type": "text", "text": ERROR_TEXT}]
-            return data
 
         chunks = text_responses(text)
         if chunks:
@@ -2279,8 +2257,9 @@ class SamaraReadingAgent(Processor):
         history_snippet = format_prompt_history(profile) or "(no prior turns)"
         label = TOPIC_LABELS.get(topic, topic)
         window = next_upcoming_window(profile, lang=lang)
+        slim = slim_chart_for_beat(chart, "beat4")
         instruction = SAMARA_BEAT4_DEEP_PROMPT.format(
-            chart_json=json.dumps(slim_chart_for_beat(chart, "beat4"), ensure_ascii=False),
+            chart_json=json.dumps(slim, ensure_ascii=False),
             user_name=display_user_name(profile),
             user_language=lang,
             current_date=now_ctx["current_date"],
@@ -2297,6 +2276,9 @@ class SamaraReadingAgent(Processor):
             ),
             turning_points_json=json.dumps(
                 (chart or {}).get("turning_points") or [], ensure_ascii=False
+            ),
+            current_period_json=json.dumps(
+                slim.get("current_period") or {}, ensure_ascii=False
             ),
             upcoming_periods_json=json.dumps(
                 (chart or {}).get("upcoming_periods") or [], ensure_ascii=False
@@ -2318,6 +2300,15 @@ class SamaraReadingAgent(Processor):
             profile["conversation_beat"] = BEAT_AWAITING_TOPIC
             data["bot_response"] = [{"type": "text", "text": ERROR_TEXT}]
             return data
+
+        user_items = list(profile.get("user_items") or [])
+        if not user_items:
+            text = strip_trailing_confirm_question(text)
+            if text.rstrip().endswith("?"):
+                parts = re.split(r"(?<=[.!?])\s+", text.rstrip())
+                while parts and parts[-1].strip().endswith("?"):
+                    parts.pop()
+                text = " ".join(parts).strip() or text
 
         profile["free_deep_answer_used"] = True
         profile["free_reading_used"] = True
@@ -2402,13 +2393,13 @@ class SamaraReadingAgent(Processor):
         profile.pop("pending_pwyw_amount", None)
         if lang == "english":
             body = (
-                f"Pay what you want — minimum ₹{min_s}. "
-                f"Tap an amount below, or type any other."
+                f"Pay what feels right — minimum ₹{min_s}. "
+                f"Tap below, or type any amount you like."
             )
         else:
             body = (
                 f"Jo dena chaho — minimum ₹{min_s}. "
-                f"Neeche se tap karo, ya koi aur amount type kar do."
+                f"Neeche tap karo, ya koi bhi amount type kar do."
             )
         data["bot_response"] = [
             paywall_buttons(lang=lang, body=body, amount_inr=min_payment_inr())
@@ -2471,12 +2462,18 @@ class SamaraReadingAgent(Processor):
             return data
 
         if checked.verdict == "under_min":
+            from kisna_chatbot.utils.pwyw_amount import min_payment_inr
+
             body = (
-                f"Minimum is ₹{min_s} — type that or a little more when you're ready."
+                f"Minimum is ₹{min_s} — tap below or type that when you're ready."
                 if lang == "english"
-                else f"Minimum ₹{min_s} hai — utna ya thoda zyada type karo."
+                else f"Minimum ₹{min_s} hai — neeche tap karo ya utna type karo."
             )
-            data["bot_response"] = [{"type": "text", "text": body}]
+            data["bot_response"] = [
+                paywall_buttons(
+                    lang=lang, body=body, amount_inr=min_payment_inr()
+                )
+            ]
             return data
 
         amount = float(checked.amount_inr or 0)
@@ -3381,33 +3378,40 @@ class SamaraReadingAgent(Processor):
         )
         maha = row.get("maha_planet_en") or ""
         antar = row.get("antar_planet_en") or ""
-        from kundli_engine.antardasha_labels import ANTAR_THEMES
+        from kundli_engine.antardasha_labels import ANTAR_THEMES, window_label_month_from_ymd
 
         theme_en, theme_hi = ANTAR_THEMES.get(antar, ("change", "badlav"))
         theme = theme_hi if lang != "english" else theme_en
+        end_iso = str(row.get("end") or "")
+        end_lab = month
+        if end_iso and len(end_iso) >= 10:
+            ey, em, ed = (int(end_iso[:4]), int(end_iso[5:7]), int(end_iso[8:10]))
+            end_en, end_hi = window_label_month_from_ymd(ey, em, ed)
+            end_lab = end_hi if lang != "english" else end_en
         # Rotate phrasing by challenge number. The same sentence twice in a row
         # exposes the template and burns the one feature the user can falsify.
         turn = min(int(profile["test_me_count"]), MAX_TEST_ME_CHALLENGES) - 1
         if lang == "english":
             variants = (
-                f"Around {month} you were in a {maha}–{antar} chapter — the "
-                f"{theme} stretch. What it did with you is yours to say, not "
-                f"mine. Does that period land?",
-                f"{month}. {maha}–{antar} was running, and that pairing pushes "
-                f"{theme} to the front. I'm not going to guess what came of it — "
-                f"do you recognise it?",
-                f"That one sits in {maha}–{antar}, from around {month}. {theme.capitalize()} "
-                f"is what that chapter leans on. Your call whether it fits.",
+                f"In {year} you're inside the {maha}–{antar} chapter that began "
+                f"{month} and runs to {end_lab} — the {theme} stretch. What it did "
+                f"with you is yours to say, not mine. Does that period land?",
+                f"{year}: {maha}–{antar} was running from {month} through {end_lab}, "
+                f"and that pairing pushes {theme} to the front. I'm not going to "
+                f"guess what came of it — do you recognise it?",
+                f"That year sits in {maha}–{antar}, from {month} to {end_lab}. "
+                f"{theme.capitalize()} is what that chapter leans on. Your call "
+                f"whether it fits.",
             )
         else:
             variants = (
-                f"{month} ke aas-paas {maha}–{antar} chapter chal raha tha — "
-                f"{theme} wala daur. Usme hua kya, woh aapki baat hai, meri nahi. "
-                f"Pehchaan aata hai?",
-                f"{month}. {maha}–{antar} chal raha tha, aur ye jodi {theme} ko "
-                f"aage le aati hai. Main guess nahi karungi ki kya nikla — aapko "
-                f"yaad padta hai?",
-                f"Woh saal {maha}–{antar} mein aata hai, {month} ke aas-paas. "
+                f"{year} mein aap {maha}–{antar} chapter ke andar the — {month} se "
+                f"{end_lab} tak — {theme} wala daur. Usme hua kya, woh aapki baat "
+                f"hai, meri nahi. Pehchaan aata hai?",
+                f"{year}: {month} se {end_lab} tak {maha}–{antar} chal raha tha, "
+                f"aur ye jodi {theme} ko aage le aati hai. Main guess nahi karungi "
+                f"ki kya nikla — aapko yaad padta hai?",
+                f"Woh saal {maha}–{antar} mein aata hai, {month} se {end_lab}. "
                 f"Us chapter ka zor {theme} pe rehta hai. Fit hota hai ya nahi, "
                 f"aap batao.",
             )

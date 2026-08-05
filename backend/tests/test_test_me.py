@@ -76,7 +76,9 @@ def test_three_challenges_allowed_then_capped():
         data: dict = {}
         agent._handle_test_me_year(data, profile, "919999999999", str(year))
         assert profile["test_me_count"] == i
-        assert f"March {year}" in data["bot_response"][0]["text"]
+        text = data["bot_response"][0]["text"]
+        assert f"March {year}" in text
+        assert str(year) in text
     assert profile["test_me_count"] == MAX_TEST_ME_CHALLENGES
     assert agent._test_me_available(profile) is False
     data = {}

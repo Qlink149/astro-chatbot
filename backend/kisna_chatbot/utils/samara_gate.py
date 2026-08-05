@@ -258,7 +258,7 @@ def door_gate_body(
             cliff = cliffs_items[idx]
             pwyw = (
                 f"Pay what feels right — ₹{amt} minimum. "
-                f"Tap an amount below, or Later — both are fine."
+                f"Tap below, or type any amount you like."
             )
             return f"{cliff}\n\n{pwyw}"
         cliffs_items_hi = (
@@ -273,7 +273,7 @@ def door_gate_body(
         cliff = cliffs_items_hi[idx]
         pwyw = (
             f"Jo theek lage — minimum ₹{amt}. "
-            f"Neeche se amount tap karo, ya Baad mein — dono theek hain."
+            f"Neeche tap karo, ya koi bhi amount type kar do."
         )
         return f"{cliff}\n\n{pwyw}"
 
@@ -310,7 +310,7 @@ def door_gate_body(
         cliff = cliffs[idx]
         pwyw = (
             f"Pay what feels right — ₹{amt} minimum. "
-            f"Tap an amount below, or Later — both are fine."
+            f"Tap below, or type any amount you like."
         )
         return f"{cliff}\n\n{pwyw}"
 
@@ -346,7 +346,7 @@ def door_gate_body(
     cliff = cliffs_hi[idx]
     pwyw = (
         f"Jo theek lage — minimum ₹{amt}. "
-        f"Neeche se amount tap karo, ya Baad mein — dono theek hain."
+        f"Neeche tap karo, ya koi bhi amount type kar do."
     )
     return f"{cliff}\n\n{pwyw}"
 
